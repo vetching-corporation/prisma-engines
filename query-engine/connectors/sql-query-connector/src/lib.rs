@@ -1,8 +1,8 @@
 #![allow(clippy::wrong_self_convention)]
 #![deny(unsafe_code)]
 
+pub mod context;
 mod column_metadata;
-mod context;
 mod cursor_condition;
 mod database;
 mod error;
@@ -19,7 +19,7 @@ mod ser_raw;
 mod sql_trace;
 mod value;
 
-use self::{column_metadata::*, context::Context, query_ext::QueryExt, row::*};
+use self::{column_metadata::*, context::Context, context::MULTITENANCY_CONTEXT, query_ext::QueryExt, row::*};
 use quaint::prelude::Queryable;
 
 pub use database::FromSource;

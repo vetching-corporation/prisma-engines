@@ -1,15 +1,23 @@
-use crate::{model_extensions::AsColumns, Context};
+use crate::{model_extensions::AsColumns, Context, MULTITENANCY_CONTEXT};
 use quaint::ast::{Column, Table};
 use query_structure::Model;
 
 pub(crate) fn db_name_with_schema(model: &Model, ctx: &Context<'_>) -> Table<'static> {
-    let schema_prefix = model
-        .walker()
-        .schema_name()
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| ctx.schema_name().to_owned());
-    let model_db_name = model.db_name().to_owned();
-    (schema_prefix, model_db_name).into()
+    MULTITENANCY_CONTEXT.with(|dynamic_schemas| {
+        let schema_prefix = model
+            .walker()
+            .schema_name()
+            .and_then(|original_schema| {
+                dynamic_schemas
+                    .borrow()
+                    .get(original_schema)
+                    .map(ToOwned::to_owned)
+                    .or(Some(original_schema.to_owned()))
+            })
+            .unwrap_or_else(|| ctx.schema_name().to_owned());
+        let model_db_name = model.db_name().to_owned();
+        (schema_prefix, model_db_name).into()
+    })
 }
 
 pub(crate) trait AsTable {

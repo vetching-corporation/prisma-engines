@@ -1,4 +1,5 @@
 use crate::{error::ApiError, logger::Logger};
+use sql_connector::context::MULTITENANCY_CONTEXT;
 use futures::FutureExt;
 use napi::{threadsafe_function::ThreadSafeCallContext, Env, JsFunction, JsObject, JsUnknown};
 use napi_derive::napi;
@@ -319,6 +320,7 @@ impl QueryEngine {
         &self,
         body: String,
         trace: String,
+        dynamic_schemas: HashMap<String, String>,
         tx_id: Option<String>,
         request_id: String,
     ) -> napi::Result<String> {
@@ -326,31 +328,34 @@ impl QueryEngine {
         let recorder = self.logger.recorder();
         let exporter = self.logger.exporter();
 
-        async_panic_to_js_error(async {
-            let inner = self.inner.read().await;
-            let engine = inner.as_engine()?;
+        MULTITENANCY_CONTEXT.scope(dynamic_schemas.into(), async {
+            async_panic_to_js_error(async {
+                let inner = self.inner.read().await;
+                let engine = inner.as_engine()?;
 
-            let query = RequestBody::try_from_str(&body, engine.engine_protocol())?;
+                let query = RequestBody::try_from_str(&body, engine.engine_protocol())?;
 
-            let span = tracing::info_span!(
-                "prisma:engine:query",
-                user_facing = true,
-                request_id = tracing::field::Empty,
-            );
-            let trace_parent = start_trace(&request_id, &trace, &span, &exporter).await?;
+                let span = tracing::info_span!(
+                    "prisma:engine:query",
+                    user_facing = true,
+                    request_id = tracing::field::Empty,
+                );
+                let trace_parent = start_trace(&request_id, &trace, &span, &exporter).await?;
 
-            async move {
-                let handler = RequestHandler::new(engine.executor(), engine.query_schema(), engine.engine_protocol());
-                let response = handler.handle(query, tx_id.map(TxId::from), trace_parent).await;
+                async move {
+                    let handler = RequestHandler::new(engine.executor(), engine.query_schema(), engine.engine_protocol());
+                    let response = handler.handle(query, tx_id.map(TxId::from), trace_parent).await;
 
-                let serde_span = tracing::info_span!("prisma:engine:response_json_serialization", user_facing = true);
-                Ok(serde_span.in_scope(|| serde_json::to_string(&response))?)
-            }
-            .instrument(span)
+                    let serde_span = tracing::info_span!("prisma:engine:response_json_serialization", user_facing = true);
+                    Ok(serde_span.in_scope(|| serde_json::to_string(&response))?)
+                }
+                .instrument(span)
+                .await
+            })
+            .with_subscriber(dispatcher)
+            .with_optional_recorder(recorder)
             .await
         })
-        .with_subscriber(dispatcher)
-        .with_optional_recorder(recorder)
         .await
     }
 

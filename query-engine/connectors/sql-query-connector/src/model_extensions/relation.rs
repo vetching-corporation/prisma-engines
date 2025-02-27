@@ -1,6 +1,5 @@
 use crate::{
-    model_extensions::{AsColumns, AsTable, ColumnIterator},
-    Context,
+    model_extensions::{AsColumns, AsTable, ColumnIterator}, Context, MULTITENANCY_CONTEXT
 };
 use quaint::{ast::Table, prelude::Column};
 use query_structure::{walkers, ModelProjection, Relation, RelationField};
@@ -73,11 +72,22 @@ impl AsTable for Relation {
             // table, so MSSQL can convert the `INSERT .. ON CONFLICT IGNORE` into
             // a `MERGE` statement.
             walkers::RefinedRelationWalker::ImplicitManyToMany(ref m) => {
-                let model_a = m.model_a();
-                let prefix = model_a.schema_name().unwrap_or_else(|| ctx.schema_name()).to_owned();
-                let table: Table = (prefix, m.table_name().to_string()).into();
+                MULTITENANCY_CONTEXT.with(|dynamic_schemas| {
+                    let model_a = m.model_a();
+                    let prefix = model_a
+                        .schema_name()
+                        .and_then(|original_schema| {
+                            dynamic_schemas
+                                .borrow()
+                                .get(original_schema)
+                                .map(ToOwned::to_owned)
+                                .or(Some(original_schema.to_owned()))
+                        })
+                        .unwrap_or_else(|| ctx.schema_name().to_owned());
+                    let table: Table = (prefix, m.table_name().to_string()).into();
 
-                table.add_unique_index(vec![Column::from("A"), Column::from("B")])
+                    table.add_unique_index(vec![Column::from("A"), Column::from("B")])
+                })
             }
             walkers::RefinedRelationWalker::Inline(ref m) => {
                 self.dm.find_model_by_id(m.referencing_model().id).as_table(ctx)

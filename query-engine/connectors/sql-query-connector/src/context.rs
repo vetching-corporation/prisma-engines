@@ -1,5 +1,14 @@
+use std::{cell::RefCell, collections::HashMap};
+
 use quaint::prelude::ConnectionInfo;
 use telemetry::TraceParent;
+use tokio::task_local;
+
+
+task_local! {
+    pub static MULTITENANCY_CONTEXT: RefCell<HashMap<String, String>>;
+}
+
 
 pub(super) struct Context<'a> {
     connection_info: &'a ConnectionInfo,
