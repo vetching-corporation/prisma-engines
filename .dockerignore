@@ -1,0 +1,8 @@
+target/
+query-engine/driver-adapters/executor
+test-setup/
+tests/
+*tests/
+*test.rs
+*tests.rs
+Dockerfile*

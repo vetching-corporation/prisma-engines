@@ -1,7 +1,7 @@
 ### --------------------------------------------------
 ### 1) Cargo Chef 설치 스테이지
 ### --------------------------------------------------
-FROM rust:1-alpine3.20 AS chef
+FROM rust:1.85-alpine3.21 AS chef
 
 # 빌드 도구 설치
 RUN apk update && \
@@ -23,6 +23,15 @@ RUN apk update && \
 
 WORKDIR /app
 
+COPY Cargo.toml Cargo.lock ./
+COPY schema-engine schema-engine
+COPY query-engine query-engine
+COPY libs libs
+COPY prisma-fmt prisma-fmt
+COPY prisma-schema-wasm prisma-schema-wasm
+COPY psl psl
+COPY quaint quaint
+
 
 ### --------------------------------------------------
 ### 2) Cargo Chef 'prepare' 스테이지
@@ -30,11 +39,7 @@ WORKDIR /app
 ### --------------------------------------------------
 FROM chef AS planner
 
-# (a) 루트 Cargo.toml, Cargo.lock, 기타 workspace 의 Cargo.toml들만 복사
-#     -> 의존성 그래프 생성에 필요한 최소 파일만 복사해 레이어 캐시 최대화
-COPY . .
-
-# (b) cargo-chef를 통해 디펜던시 그래프 생성
+# cargo-chef를 통해 디펜던시 그래프 생성
 RUN cargo chef prepare --recipe-path recipe.json
 
 
@@ -42,15 +47,16 @@ RUN cargo chef prepare --recipe-path recipe.json
 ### 3) Cargo Chef 'cook' 스테이지
 ###    - 실제로 의존성만 먼저 빌드하여 캐시
 ### --------------------------------------------------
-FROM chef AS cacher
+FROM planner AS cacher
 
 WORKDIR /app
 
-# recipe.json(의존성 그래프)만 복사
-COPY --from=planner /app/recipe.json recipe.json
-
 # --release 옵션으로 실제 프로덕션 빌드용 의존성 캐시 생성
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN RUSTFLAGS="-C target-feature=-crt-static" \
+    cargo chef cook --release \
+        --recipe-path recipe.json \
+        -p query-engine-node-api \
+        -p schema-engine-cli
 
 
 ### --------------------------------------------------
@@ -61,10 +67,9 @@ FROM cacher AS builder
 
 WORKDIR /app
 
-# (a) 이제 전체 소스 코드 복사
-COPY . .
-
-# (b) query-engine-node-api 모듈만 빌드
-#     (workspace 내 다른 바이너리는 필요시 함께 빌드 가능)
+# query-engine-node-api, schema-engine-cli 모듈만 빌드
+# (workspace 내 다른 바이너리는 필요시 함께 빌드 가능)
 RUN RUSTFLAGS="-C target-feature=-crt-static" \
-    cargo build --release -p query-engine-node-api
+    cargo build --release \
+        -p query-engine-node-api \
+        -p schema-engine-cli
