@@ -320,8 +320,8 @@ impl QueryEngine {
         &self,
         body: String,
         trace: String,
-        dynamic_schemas: HashMap<String, String>,
         tx_id: Option<String>,
+        dynamic_schemas: HashMap<String, String>,
         request_id: String,
     ) -> napi::Result<String> {
         let dispatcher = self.logger.dispatcher();
