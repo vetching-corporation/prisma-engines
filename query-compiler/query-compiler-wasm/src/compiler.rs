@@ -11,6 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use tsify::Tsify;
 use user_facing_errors::UserFacingError;
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
+use sql_query_builder::DynamicSchema;
 
 use crate::params::{AdapterProvider, JsConnectionInfo};
 
@@ -92,37 +93,40 @@ impl QueryCompiler {
     }
 
     #[wasm_bindgen]
-    pub fn compile(&self, request: String) -> Result<JsValue, JsCompileError> {
+    pub fn compile(&self, request: String, schema_request: Option<String>) -> Result<JsValue, JsCompileError> {
         with_sync_unevaluated_request_context(move || {
             let request = RequestBody::try_from_str(&request, self.protocol)?;
             let QueryDocument::Single(op) = request.into_doc(&self.schema)? else {
                 return Err(JsCompileError::plain("Unexpected batch request"));
             };
-            let plan = query_compiler::compile(&self.schema, op, &self.connection_info)?;
+            let dynamic_schema = DynamicSchema::from_str(schema_request);
+            let plan = query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema)?;
             Ok(plan.serialize(&shared_wasm::RESPONSE_SERIALIZER)?)
         })
     }
 
     #[wasm_bindgen(js_name = compileBatch)]
-    pub fn compile_batch(&self, request: String) -> Result<JsValue, JsCompileError> {
+    pub fn compile_batch(&self, request: String, schema_request: Option<String>) -> Result<JsValue, JsCompileError> {
         with_sync_unevaluated_request_context(move || {
             let request = RequestBody::try_from_str(&request, self.protocol)?;
+            let dynamic_schema = DynamicSchema::from_str(schema_request);
+
             let response = match request.into_doc(&self.schema)? {
                 QueryDocument::Single(op) => {
-                    let plan = query_compiler::compile(&self.schema, op, &self.connection_info)?;
+                    let plan = query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema.clone())?;
                     BatchResponse::Multi { plans: vec![plan] }
                 }
                 QueryDocument::Multi(batch) => match batch.compact(&self.schema) {
                     BatchDocument::Multi(operations, _) => {
                         let plans = operations
                             .into_iter()
-                            .map(|op| query_compiler::compile(&self.schema, op, &self.connection_info))
+                            .map(|op| query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema.clone()))
                             .collect::<Result<Vec<_>, _>>()?;
                         BatchResponse::Multi { plans }
                     }
                     BatchDocument::Compact(compacted) => {
                         let expect_non_empty = compacted.throw_on_empty();
-                        let plan = query_compiler::compile(&self.schema, compacted.operation, &self.connection_info)?;
+                        let plan = query_compiler::compile_with_dynamic_schema(&self.schema, compacted.operation, &self.connection_info, dynamic_schema.clone())?;
                         BatchResponse::Compacted {
                             plan,
                             arguments: compacted.arguments,

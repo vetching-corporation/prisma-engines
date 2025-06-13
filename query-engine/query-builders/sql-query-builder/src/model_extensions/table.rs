@@ -6,7 +6,7 @@ pub(crate) fn db_name_with_schema(model: &Model, ctx: &Context<'_>) -> Table<'st
     let schema_prefix = model
         .walker()
         .schema_name()
-        .map(ToOwned::to_owned)
+        .and_then(|origin_schema| ctx.dynamic_schema(origin_schema))
         .unwrap_or_else(|| ctx.schema_name().to_owned());
     let model_db_name = model.db_name().to_owned();
     (schema_prefix, model_db_name).into()
