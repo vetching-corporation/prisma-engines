@@ -1,5 +1,5 @@
-name: Build and publish @prisma/query-compiler-wasm
-run-name: npm - release @prisma/query-compiler-wasm@${{ github.event.inputs.packageVersion }} from ${{ github.event.inputs.enginesHash }} on ${{ github.event.inputs.npmDistTag }}
+name: Build and publish @vetching-corporation/prisma-query-compiler-wasm
+run-name: npm - release @vetching-corporation/prisma-query-compiler-wasm@${{ github.event.inputs.packageVersion }} from ${{ github.event.inputs.enginesHash }} on ${{ github.event.inputs.npmDistTag }}
 
 concurrency: publish-query-compiler-wasm
 
@@ -20,7 +20,7 @@ on:
 
 jobs:
   build:
-    name: Build and publish @prisma/query-compiler-wasm
+    name: Build and publish @vetching-corporation/prisma-query-compiler-wasm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,7 +35,7 @@ jobs:
 
       - uses: ./.github/workflows/include/rust-wasm-setup
 
-      - name: Build @prisma/query-compiler-wasm
+      - name: Build @vetching-corporation/prisma-query-compiler-wasm
         run: make build-qc-wasm
         env:
           QE_WASM_VERSION: ${{ github.event.inputs.packageVersion }}
@@ -45,7 +45,7 @@ jobs:
         with:
           node-version: '20.x'
 
-      - name: Publish @prisma/query-compiler-wasm
+      - name: Publish @vetching-corporation/prisma-query-compiler-wasm
         run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
         working-directory: query-compiler/query-compiler-wasm/pkg
         env:
@@ -61,7 +61,7 @@ jobs:
         if: ${{ failure() }}
         uses: rtCamp/action-slack-notify@v2.3.2
         env:
-          SLACK_TITLE: 'Building and publishing @prisma/query-compiler-wasm failed :x:'
+          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm failed :x:'
           SLACK_COLOR: '#FF0000'
           SLACK_CHANNEL: feed-prisma-query-compiler-wasm-publish-failures
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM_FAILING }}
