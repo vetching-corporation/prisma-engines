@@ -47,7 +47,32 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@vetching-corporation'
 
-      - name: Publish @vetching-corporation/prisma-query-compiler-wasm
+      - name: Install jq
+        uses: dcarbone/install-jq-action@v3
+
+      - name: Set package version with sequence
+        id: semver
+        env:
+          WORKING_DIR: query-compiler/query-compiler-wasm/pkg
+          BASE_VERSION: ${{ github.event.inputs.packageVersion }}
+          PACKAGE: '@vetching-corporation/prisma-query-compiler-wasm'
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          versions=$(npm view "$PACKAGE" versions --json 2>/dev/null || echo '[]')
+          sequence=$(
+            echo "$versions" | jq -r --arg base "$BASE_VERSION" '
+              map(select(startswith($base + "-")))
+              | map(split("-")[1] | split(".")[0] | tonumber)
+              | max
+            '
+          )
+          sequence=$((sequence + 1))
+
+          OUT_VERSION="${BASE_VERSION}-${sequence}.${{ github.event.inputs.enginesHash }}"
+
+          jq '.version=$version' --arg version "$OUT_VERSION" "$WORKING_DIR/package.json" > "$WORKING_DIR/package.json"
+
+      - name: Publish @vetching-corporation/prisma-querny-compiler-wasm
         run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
         working-directory: query-compiler/query-compiler-wasm/pkg
         env:
