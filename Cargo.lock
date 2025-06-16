@@ -3876,6 +3876,7 @@ dependencies = [
  "schema",
  "serde",
  "serde_json",
+ "sql-query-builder",
  "tracing",
  "tsify",
  "user-facing-errors",

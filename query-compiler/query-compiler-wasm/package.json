@@ -1,5 +1,12 @@
 {
-  "name": "@prisma/query-compiler-wasm",
+  "name": "@vetching-corporation/prisma-query-compiler-wasm",
   "version": "0.0.0",
-  "type": "module"
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vetching-corporation/prisma-engines.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }

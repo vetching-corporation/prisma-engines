@@ -27,6 +27,7 @@ query-compiler.workspace = true
 schema.workspace = true
 request-handlers.workspace = true
 user-facing-errors.workspace = true
+sql-query-builder.workspace = true
 
 [build-dependencies]
 build-utils.workspace = true
