@@ -46,8 +46,10 @@ jobs:
           node-version: '20.x'
 
       - name: Publish @prisma/query-compiler-wasm
-        run: npm publish --access public --tag ${{ github.event.inputs.npmDistTag }}
+        run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
         working-directory: query-compiler/query-compiler-wasm/pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       #
       # Failure handlers
