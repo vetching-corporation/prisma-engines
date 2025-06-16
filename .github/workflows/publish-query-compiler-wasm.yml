@@ -68,9 +68,10 @@ jobs:
           )
           sequence=$((sequence + 1))
 
-          echo "PACKAGE_VERSION=${BASE_VERSION}-${sequence}.${{ github.event.inputs.enginesHash }}" >> $GITHUB_OUTPUT
+          PACKAGE_VERSION="${BASE_VERSION}-${sequence}.${{ github.event.inputs.enginesHash }}"
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
 
-          jq '.version=$version' --arg version "$PACKAGE_VERSION" "$WORKING_DIR/package.json" > "$WORKING_DIR/package-temp.json"
+          jq --arg version "$PACKAGE_VERSION" '.version=$version' "$WORKING_DIR/package.json" > "$WORKING_DIR/package-temp.json"
           mv "$WORKING_DIR/package-temp.json" "$WORKING_DIR/package.json"
 
       - name: Publish @vetching-corporation/prisma-querny-compiler-wasm
