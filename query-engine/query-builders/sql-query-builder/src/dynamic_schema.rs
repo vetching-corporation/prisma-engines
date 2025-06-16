@@ -1,3 +1,9 @@
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `DynamicSchema` struct to support dynamic schema
+ */
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]

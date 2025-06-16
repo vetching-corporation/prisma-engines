@@ -31,6 +31,12 @@ pub enum CompileError {
     TranslateError(#[from] TranslateError),
 }
 
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Change `compile` function to use `compile_with_dynamic_schema` function
+ */
 pub fn compile(
     query_schema: &Arc<QuerySchema>,
     query: Operation,
@@ -39,6 +45,12 @@ pub fn compile(
     compile_with_dynamic_schema(query_schema, query, connection_info, DynamicSchema::default())
 }
 
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `compile_with_dynamic_schema` function to support dynamic schema
+ */
 pub fn compile_with_dynamic_schema(
     query_schema: &Arc<QuerySchema>,
     query: Operation,

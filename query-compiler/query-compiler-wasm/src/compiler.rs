@@ -90,6 +90,12 @@ impl QueryCompiler {
         })
     }
 
+    /**
+     * Changed by @vetching-corporation
+     * Author: nfl1ryxditimo12@gmail.com
+     * Date: 2025-06-16
+     * Note: Add `schema_request` parameter to support dynamic schema
+     */
     #[wasm_bindgen]
     pub fn compile(&self, request: String, schema_request: Option<String>) -> Result<String, JsCompileError> {
         with_sync_unevaluated_request_context(move || {
@@ -103,6 +109,12 @@ impl QueryCompiler {
         })
     }
 
+    /**
+     * Changed by @vetching-corporation
+     * Author: nfl1ryxditimo12@gmail.com
+     * Date: 2025-06-16
+     * Note: Add `schema_request` parameter to support dynamic schema
+     */
     #[wasm_bindgen(js_name = compileBatch)]
     pub fn compile_batch(&self, request: String, schema_request: Option<String>) -> Result<BatchResponse, JsCompileError> {
         with_sync_unevaluated_request_context(move || {

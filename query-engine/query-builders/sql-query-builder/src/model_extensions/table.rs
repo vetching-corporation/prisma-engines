@@ -2,6 +2,12 @@ use crate::{model_extensions::AsColumns, Context};
 use quaint::ast::{Column, Table};
 use query_structure::Model;
 
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `target_schema` function to support dynamic schema
+ */
 pub(crate) fn db_name_with_schema(model: &Model, ctx: &Context<'_>) -> Table<'static> {
     let schema_prefix = model
         .walker()

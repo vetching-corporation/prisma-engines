@@ -6,6 +6,12 @@ use telemetry::TraceParent;
 use crate::filter::alias::Alias;
 use crate::dynamic_schema::DynamicSchema;
 
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `dynamic_schema` field to support dynamic schema
+ */
 pub struct Context<'a> {
     connection_info: &'a ConnectionInfo,
     pub(crate) traceparent: Option<TraceParent>,
@@ -36,6 +42,12 @@ impl<'a> Context<'a> {
         }
     }
 
+    /**
+     * Changed by @vetching-corporation
+     * Author: nfl1ryxditimo12@gmail.com
+     * Date: 2025-06-16
+     * Note: Add `new_with_dynamic_schema` function to support dynamic schema
+     */
     pub fn new_with_dynamic_schema(connection_info: &'a ConnectionInfo, dynamic_schema: DynamicSchema, traceparent: Option<TraceParent>) -> Self {
         let mut ctx = Context::new(connection_info, traceparent);
         ctx.dynamic_schema = dynamic_schema;
@@ -70,6 +82,12 @@ impl<'a> Context<'a> {
         Alias::Join(self.alias_counter.fetch_add(1, sync::atomic::Ordering::SeqCst))
     }
 
+    /**
+     * Changed by @vetching-corporation
+     * Author: nfl1ryxditimo12@gmail.com
+     * Date: 2025-06-16
+     * Note: Add `target_schema` function to support dynamic schema
+     */
     pub fn target_schema(&self, origin_schema: &str) -> Option<String> {
         if self.dynamic_schema.is_empty() {
             return Some(origin_schema.to_owned());
