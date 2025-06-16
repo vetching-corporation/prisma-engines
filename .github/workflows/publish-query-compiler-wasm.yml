@@ -56,7 +56,7 @@ jobs:
           WORKING_DIR: query-compiler/query-compiler-wasm/pkg
           BASE_VERSION: ${{ github.event.inputs.packageVersion }}
           ORGANIZATION: 'vetching-corporation'
-          PACKAGE: '@vetching-corporation/prisma-query-compiler-wasm'
+          PACKAGE: 'prisma-query-compiler-wasm'
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           results=$(
