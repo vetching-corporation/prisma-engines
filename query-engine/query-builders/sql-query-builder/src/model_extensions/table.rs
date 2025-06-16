@@ -2,11 +2,17 @@ use crate::{model_extensions::AsColumns, Context};
 use quaint::ast::{Column, Table};
 use query_structure::Model;
 
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `target_schema` function to support dynamic schema
+ */
 pub(crate) fn db_name_with_schema(model: &Model, ctx: &Context<'_>) -> Table<'static> {
     let schema_prefix = model
         .walker()
         .schema_name()
-        .map(ToOwned::to_owned)
+        .and_then(|origin_schema| ctx.target_schema(origin_schema))
         .unwrap_or_else(|| ctx.schema_name().to_owned());
     let model_db_name = model.db_name().to_owned();
     (schema_prefix, model_db_name).into()
