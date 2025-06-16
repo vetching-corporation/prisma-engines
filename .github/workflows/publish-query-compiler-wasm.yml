@@ -80,6 +80,19 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       #
+      # Success handlers
+      #
+      - name: Set current job url in SLACK_FOOTER env var
+        if: ${{ success() }}
+        run: echo "SLACK_FOOTER=<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|Click here to go to the job logs>" >> $GITHUB_ENV
+      - name: Slack Notification on Success
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@v2.3.2
+        env:
+          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm succeeded :tada:'
+          SLACK_COLOR: '#00FF00'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}
+      #
       # Failure handlers
       #
       - name: Set current job url in SLACK_FOOTER env var
@@ -91,5 +104,4 @@ jobs:
         env:
           SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm failed :x:'
           SLACK_COLOR: '#FF0000'
-          SLACK_CHANNEL: feed-prisma-query-compiler-wasm-publish-failures
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM_FAILING }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}
