@@ -90,7 +90,7 @@ jobs:
         if: ${{ success() }}
         uses: rtCamp/action-slack-notify@v2.3.2
         env:
-          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm succeeded :tada:'
+          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm succeeded :rocket:'
           SLACK_COLOR: '#00FF00'
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}
       - name: Release tag
