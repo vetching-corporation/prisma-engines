@@ -23,7 +23,7 @@ jobs:
     name: Build and publish @vetching-corporation/prisma-query-compiler-wasm
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Print input
@@ -92,6 +92,13 @@ jobs:
           SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm succeeded :tada:'
           SLACK_COLOR: '#00FF00'
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}
+      - name: Release tag
+        if: ${{ success() }}
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_TAG: ${{ steps.semver.outputs.PACKAGE_VERSION }}
+
       #
       # Failure handlers
       #
