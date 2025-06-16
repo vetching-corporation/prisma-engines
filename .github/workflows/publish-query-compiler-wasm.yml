@@ -44,6 +44,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
+          registry-url: https://npm.pkg.github.com
+          scope: '@vetching-corporation'
 
       - name: Publish @vetching-corporation/prisma-query-compiler-wasm
         run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
