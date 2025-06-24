@@ -80,7 +80,7 @@ jobs:
           jq --arg version "$PACKAGE_VERSION" '.version=$version' "$WORKING_DIR/package.json" > "$WORKING_DIR/package-temp.json"
           mv "$WORKING_DIR/package-temp.json" "$WORKING_DIR/package.json"
 
-      - name: Publish @vetching-corporation/prisma-querny-compiler-wasm
+      - name: Publish @vetching-corporation/prisma-query-compiler-wasm
         run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
         working-directory: query-compiler/query-compiler-wasm/pkg
         env:
