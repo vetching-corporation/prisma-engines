@@ -6,6 +6,10 @@ use quaint::error::PostgresError;
 
 #[cfg(feature = "sqlite")]
 use quaint::error::SqliteError;
+
+#[cfg(feature = "mssql")]
+use quaint::error::MssqlError;
+
 use serde::Deserialize;
 
 #[cfg(feature = "postgresql")]
@@ -37,6 +41,14 @@ pub struct SqliteErrorDef {
     pub message: Option<String>,
 }
 
+#[cfg(feature = "mssql")]
+#[derive(Deserialize)]
+#[serde(remote = "MssqlError", rename_all = "camelCase")]
+pub struct MssqlErrorDef {
+    pub code: u32,
+    pub message: String,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind")]
 /// Wrapper for JS-side errors
@@ -56,13 +68,13 @@ pub(crate) enum DriverAdapterError {
         column: Option<String>,
     },
     UniqueConstraintViolation {
-        fields: Vec<String>,
+        constraint: Option<DriverAdapterConstraint>,
     },
     NullConstraintViolation {
-        fields: Vec<String>,
+        constraint: Option<DriverAdapterConstraint>,
     },
     ForeignKeyConstraintViolation {
-        constraint: DriverAdapterConstraint,
+        constraint: Option<DriverAdapterConstraint>,
     },
     DatabaseDoesNotExist {
         db: Option<String>,
@@ -87,6 +99,13 @@ pub(crate) enum DriverAdapterError {
     TooManyConnections {
         cause: String,
     },
+    ValueOutOfRange {
+        cause: String,
+    },
+    MissingFullTextSearchIndex,
+    TransactionAlreadyClosed {
+        cause: String,
+    },
     #[cfg(feature = "postgresql")]
     #[serde(rename = "postgres")]
     Postgres(#[serde(with = "PostgresErrorDef")] PostgresError),
@@ -96,6 +115,9 @@ pub(crate) enum DriverAdapterError {
     #[cfg(feature = "sqlite")]
     #[serde(rename = "sqlite")]
     Sqlite(#[serde(with = "SqliteErrorDef")] SqliteError),
+    #[cfg(feature = "mssql")]
+    #[serde(rename = "mssql")]
+    Mssql(#[serde(with = "MssqlErrorDef")] MssqlError),
 }
 
 #[derive(Deserialize)]
@@ -104,4 +126,14 @@ pub(crate) enum DriverAdapterConstraint {
     Fields(Vec<String>),
     Index(String),
     ForeignKey,
+}
+
+impl From<DriverAdapterConstraint> for quaint::error::DatabaseConstraint {
+    fn from(value: DriverAdapterConstraint) -> Self {
+        match value {
+            DriverAdapterConstraint::Fields(fields) => quaint::error::DatabaseConstraint::Fields(fields),
+            DriverAdapterConstraint::Index(index) => quaint::error::DatabaseConstraint::Index(index),
+            DriverAdapterConstraint::ForeignKey => quaint::error::DatabaseConstraint::ForeignKey,
+        }
+    }
 }

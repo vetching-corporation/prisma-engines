@@ -1,11 +1,12 @@
 use super::*;
 use crate::{
+    inputs::RecordQueryFilterInput,
     query_ast::*,
-    query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    ArgumentListLookup, DataExpectation, ParsedField, ParsedInputList, ParsedInputMap,
+    query_graph::{NodeRef, QueryGraph, QueryGraphDependency},
+    ArgumentListLookup, DataExpectation, ParsedField, ParsedInputList, ParsedInputMap, RowSink,
 };
 use psl::{datamodel_connector::ConnectorCapability, parser_database::RelationFieldId};
-use query_structure::{IntoFilter, Model, WriteArgs, Zipper};
+use query_structure::{Model, WriteArgs, Zipper};
 use schema::{constants::args, QuerySchema};
 use std::convert::TryInto;
 use write_args_parser::*;
@@ -39,17 +40,9 @@ pub(crate) fn create_record(
         graph.create_edge(
             &create_node,
             &read_node,
-            QueryGraphDependency::ProjectedDataDependency(
-                model.primary_identifier(),
-                Box::new(move |mut read_node, mut parent_ids| {
-                    let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                    if let Node::Query(Query::Read(ReadQuery::RecordQuery(ref mut rq))) = read_node {
-                        rq.add_filter(parent_id.filter());
-                    };
-
-                    Ok(read_node)
-                }),
+            QueryGraphDependency::ProjectedDataSinkDependency(
+                model.shard_aware_primary_identifier(),
+                RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRecord::builder().operation(DataOperation::Query).build(),
                 )),
@@ -136,7 +129,7 @@ pub(crate) fn create_record_node_from_args(
     args: WriteArgs,
     nested: Vec<(Zipper<RelationFieldId>, ParsedInputMap<'_>)>,
 ) -> QueryGraphBuilderResult<NodeRef> {
-    let selected_fields = model.primary_identifier();
+    let selected_fields = model.shard_aware_primary_identifier();
     let selection_order = selected_fields.db_names().collect();
 
     let cr = CreateRecord {

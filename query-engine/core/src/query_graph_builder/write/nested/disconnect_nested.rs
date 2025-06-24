@@ -1,10 +1,11 @@
 use super::*;
 use crate::{
-    query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    ParsedInputMap, ParsedInputValue, Query, WriteQuery,
+    inputs::UpdateManyRecordsSelectorsInput,
+    query_graph::{NodeRef, QueryGraph, QueryGraphDependency},
+    ParsedInputMap, ParsedInputValue, RowSink,
 };
 use itertools::Itertools;
-use query_structure::{Filter, Model, PrismaValue, RelationCompare, RelationFieldRef, SelectionResult};
+use query_structure::{Filter, Model, PrismaValue, RelationCompare, RelationFieldRef, SelectionResult, WriteArgs};
 use std::convert::TryInto;
 
 /// Handles nested disconnect cases.
@@ -168,7 +169,7 @@ fn handle_one_to_x(
         if parent_relation_field.is_inlined_on_enclosing_model() {
             // Inlined on parent
             let parent_model = parent_relation_field.model();
-            let extractor_model_id = parent_model.primary_identifier();
+            let extractor_model_id = parent_model.shard_aware_primary_identifier();
             let null_record_id = SelectionResult::from(&parent_relation_field.linking_fields());
             // If the relation is inlined on the parent and a filter is applied on the child then update is done on the parent table.
             // Therefore, the filter applied on the child needs to be converted to a "relational" filter so that the connector renders the adequate SQL to join the Child table.
@@ -182,7 +183,7 @@ fn handle_one_to_x(
         } else {
             // Inlined on child
             let child_model = child_relation_field.model();
-            let extractor_model_id = child_model.primary_identifier();
+            let extractor_model_id = child_model.shard_aware_primary_identifier();
             let null_record_id = SelectionResult::from(&child_relation_field.linking_fields());
 
             (
@@ -194,27 +195,16 @@ fn handle_one_to_x(
             )
         };
 
-    let update_node = utils::update_records_node_placeholder(graph, filter, model_to_update);
+    let write_args = WriteArgs::from_result(null_record_id, crate::executor::get_request_now());
+    let update_node = utils::update_records_node_placeholder_with_args(graph, filter, model_to_update, write_args);
 
     // Edge to inject the correct data into the update (either from the parent or child).
     graph.create_edge(
         node_to_attach,
         &update_node,
-        QueryGraphDependency::ProjectedDataDependency(
+        QueryGraphDependency::ProjectedDataSinkDependency(
             extractor_model_id,
-            Box::new(move |mut update_node, links| {
-                if links.is_empty() {
-                    return Ok(update_node);
-                }
-
-                // Handle filter & arg injection
-                if let Node::Query(Query::Write(ref mut wq @ WriteQuery::UpdateManyRecords(_))) = update_node {
-                    wq.set_selectors(links);
-                    wq.inject_result_into_args(null_record_id);
-                };
-
-                Ok(update_node)
-            }),
+            RowSink::All(&UpdateManyRecordsSelectorsInput),
             None,
         ),
     )?;

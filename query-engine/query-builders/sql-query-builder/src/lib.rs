@@ -218,13 +218,13 @@ impl<'a, V: Visitor<'a>> QueryBuilder for SqlQueryBuilder<'a, V> {
         mut args: WriteArgs,
         selected_fields: &FieldSelection,
     ) -> Result<CreateRecord, Box<dyn std::error::Error + Send + Sync>> {
-        let id_selection = model.primary_identifier();
+        let id_selection = model.shard_aware_primary_identifier();
 
         let (select_defaults, last_insert_id_field, merge_values) = if self.context.sql_family().is_mysql() {
             let (field_placeholders, query): (Vec<_>, Select<'static>) =
                 write::defaults_for_mysql_write_args(&id_selection, &args)
                     .map(|(field, arg)| {
-                        let ph = Placeholder::new(field.name().to_owned(), field.result_type().to_prisma_type());
+                        let ph = Placeholder::new(field.name().to_owned(), field.type_info().to_prisma_type());
                         ((field, ph), arg)
                     })
                     .unzip();
@@ -293,10 +293,22 @@ impl<'a, V: Visitor<'a>> QueryBuilder for SqlQueryBuilder<'a, V> {
                 self.convert_query(query)
             }
             None => {
-                // this branch is for updates without selections, normally used for databases
-                // without RETURNING, the logic is slightly more complicated and will require
-                // translating update::update_one_without_selection from the sql-query-connector
-                todo!()
+                let selection_results = record_filter
+                    .selectors
+                    .expect("should have record selectors for update");
+                let query = update::update_many_from_ids_and_filter(
+                    model,
+                    record_filter.filter,
+                    &selection_results,
+                    args,
+                    None,
+                    &self.context,
+                )
+                .into_iter()
+                .exactly_one()
+                .expect("should generate exactly one update query");
+
+                self.convert_query(query)
             }
         }
     }

@@ -2,8 +2,8 @@
 use super::{FilteredNestedMutation, FilteredQuery};
 use crate::{ReadQuery, RecordQuery, ToGraphviz};
 use connector::NativeUpsert;
-use query_structure::{prelude::*, DatasourceFieldName, Filter, RecordFilter, WriteArgs};
-use std::{borrow::Cow, collections::HashMap};
+use query_structure::{prelude::*, Filter, RecordFilter, WriteArgs};
+use std::{borrow::Cow, collections::HashMap, slice};
 
 #[derive(Debug, Clone)]
 pub enum WriteQuery {
@@ -21,30 +21,29 @@ pub enum WriteQuery {
 }
 
 impl WriteQuery {
-    /// Takes a SelectionResult and writes its contents into the write arguments of the underlying query.
-    pub fn inject_result_into_args(&mut self, result: SelectionResult) {
-        let model = self.model();
-
-        let inject = |args: &mut WriteArgs| {
-            for (selected_field, value) in result.pairs() {
-                args.insert(
-                    DatasourceFieldName(selected_field.db_name().into_owned()),
-                    (selected_field, value.clone()),
-                )
-            }
-            args.update_datetimes(&model);
-        };
-
+    /// Returns true if the query is expected to return a single record.
+    pub fn is_unique(&self) -> bool {
         match self {
-            Self::CreateRecord(ref mut x) => inject(&mut x.args),
-            Self::CreateManyRecords(ref mut x) => x.args.iter_mut().map(inject).collect(),
-            Self::UpdateRecord(ref mut x) => match x {
-                UpdateRecord::WithSelection(u) => inject(&mut u.args),
-                UpdateRecord::WithoutSelection(u) => inject(&mut u.args),
-            },
-            Self::UpdateManyRecords(x) => inject(&mut x.args),
-            _ => (),
-        };
+            Self::CreateRecord(_) | Self::UpdateRecord(_) | Self::DeleteRecord(_) | Self::Upsert(_) => true,
+            Self::CreateManyRecords(_)
+            | Self::UpdateManyRecords(_)
+            | Self::DeleteManyRecords(_)
+            | Self::ConnectRecords(_)
+            | Self::DisconnectRecords(_)
+            | Self::ExecuteRaw(_)
+            | Self::QueryRaw(_) => false,
+        }
+    }
+
+    /// Returns a mutable slice of the write arguments from an underlying INSERT if applicable
+    /// or an empty slice otherwise.
+    pub fn insert_args_mut(&mut self) -> &mut [WriteArgs] {
+        match self {
+            Self::CreateRecord(cr) => slice::from_mut(&mut cr.args),
+            Self::CreateManyRecords(CreateManyRecords { args, .. }) => &mut args[..],
+            Self::Upsert(upsert) => slice::from_mut(upsert.create_mut()),
+            _ => &mut [],
+        }
     }
 
     pub fn set_selectors(&mut self, selectors: Vec<SelectionResult>) {
@@ -72,7 +71,7 @@ impl WriteQuery {
             }
             Self::UpdateRecord(UpdateRecord::WithSelection(ur)) => Some(&ur.selected_fields),
             Self::UpdateRecord(UpdateRecord::WithoutSelection(_)) => {
-                return Some(Cow::Owned(self.model().primary_identifier()))
+                return Some(Cow::Owned(self.model().shard_aware_primary_identifier()))
             }
             Self::DeleteRecord(DeleteRecord { selected_fields, .. }) => selected_fields.as_ref().map(|sf| &sf.fields),
             Self::UpdateManyRecords(UpdateManyRecords { selected_fields, .. }) => {
@@ -290,10 +289,17 @@ pub enum UpdateRecord {
 }
 
 impl UpdateRecord {
-    pub(crate) fn args(&self) -> &WriteArgs {
+    pub fn args(&self) -> &WriteArgs {
         match self {
             UpdateRecord::WithSelection(u) => &u.args,
             UpdateRecord::WithoutSelection(u) => &u.args,
+        }
+    }
+
+    pub fn args_mut(&mut self) -> &mut WriteArgs {
+        match self {
+            UpdateRecord::WithSelection(u) => &mut u.args,
+            UpdateRecord::WithoutSelection(u) => &mut u.args,
         }
     }
 
