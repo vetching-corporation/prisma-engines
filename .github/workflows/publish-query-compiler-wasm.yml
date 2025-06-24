@@ -1,5 +1,5 @@
-name: Build and publish @prisma/query-compiler-wasm
-run-name: npm - release @prisma/query-compiler-wasm@${{ github.event.inputs.packageVersion }} from ${{ github.event.inputs.enginesHash }} on ${{ github.event.inputs.npmDistTag }}
+name: Build and publish @vetching-corporation/prisma-query-compiler-wasm
+run-name: npm - release @vetching-corporation/prisma-query-compiler-wasm@${{ github.event.inputs.packageVersion }} from ${{ github.event.inputs.enginesHash }} on ${{ github.event.inputs.npmDistTag }}
 
 concurrency: publish-query-compiler-wasm
 
@@ -20,8 +20,11 @@ on:
 
 jobs:
   build:
-    name: Build and publish @prisma/query-compiler-wasm
+    name: Build and publish @vetching-corporation/prisma-query-compiler-wasm
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Print input
         run: echo "${{ toJson(github.event.inputs) }}"
@@ -32,7 +35,7 @@ jobs:
 
       - uses: ./.github/workflows/include/rust-wasm-setup
 
-      - name: Build @prisma/query-compiler-wasm
+      - name: Build @vetching-corporation/prisma-query-compiler-wasm
         run: make build-qc-wasm
         env:
           QE_WASM_VERSION: ${{ github.event.inputs.packageVersion }}
@@ -41,13 +44,67 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
+          registry-url: https://npm.pkg.github.com
+          scope: '@vetching-corporation'
 
-      - name: Set up NPM token for publishing
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+      - name: Install jq
+        uses: dcarbone/install-jq-action@v3
 
-      - name: Publish @prisma/query-compiler-wasm
-        run: npm publish --access public --tag ${{ github.event.inputs.npmDistTag }}
+      - name: Set package version with sequence
+        id: semver
+        env:
+          WORKING_DIR: query-compiler/query-compiler-wasm/pkg
+          BASE_VERSION: ${{ github.event.inputs.packageVersion }}
+          ORGANIZATION: 'vetching-corporation'
+          PACKAGE: 'prisma-query-compiler-wasm'
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          results=$(
+            curl \
+              -sSfL \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/${ORGANIZATION}/packages/npm/${PACKAGE}/versions"
+          )
+          sequence=$(echo "$results" | jq -r --arg base "$BASE_VERSION" '
+            [.[].name                                       # 모든 tag 이름
+            | select(startswith($base + "-"))               # base-prefix 필터
+            | capture("^" + $base + "-(?<seq>[0-9]+)\\.")   # seq 추출
+            | (.seq | tonumber)                             # 숫자로 변환
+            ] | max // 0 | . + 1                            # 최대값(+1), 없으면 1
+          ')
+
+          PACKAGE_VERSION="${BASE_VERSION}-${sequence}.${{ github.event.inputs.enginesHash }}"
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
+
+          jq --arg version "$PACKAGE_VERSION" '.version=$version' "$WORKING_DIR/package.json" > "$WORKING_DIR/package-temp.json"
+          mv "$WORKING_DIR/package-temp.json" "$WORKING_DIR/package.json"
+
+      - name: Publish @vetching-corporation/prisma-querny-compiler-wasm
+        run: npm publish --tag ${{ github.event.inputs.npmDistTag }}
         working-directory: query-compiler/query-compiler-wasm/pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      #
+      # Success handlers
+      #
+      - name: Set current job url in SLACK_FOOTER env var
+        if: ${{ success() }}
+        run: echo "SLACK_FOOTER=<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|Click here to go to the job logs>" >> $GITHUB_ENV
+      - name: Slack Notification on Success
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@v2.3.2
+        env:
+          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm succeeded :rocket:'
+          SLACK_COLOR: '#00FF00'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}
+      - name: Release tag
+        if: ${{ success() }}
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_TAG: ${{ steps.semver.outputs.PACKAGE_VERSION }}
 
       #
       # Failure handlers
@@ -59,7 +116,6 @@ jobs:
         if: ${{ failure() }}
         uses: rtCamp/action-slack-notify@v2.3.2
         env:
-          SLACK_TITLE: 'Building and publishing @prisma/query-compiler-wasm failed :x:'
+          SLACK_TITLE: 'Building and publishing @vetching-corporation/prisma-query-compiler-wasm failed :x:'
           SLACK_COLOR: '#FF0000'
-          SLACK_CHANNEL: feed-prisma-query-compiler-wasm-publish-failures
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM_FAILING }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WASM }}

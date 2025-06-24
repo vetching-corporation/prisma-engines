@@ -80,7 +80,7 @@ impl AsTable for Relation {
                 // Note: Add `target_schema` function to support dynamic schema
                 let prefix = model_a
                     .schema_name()
-                    .and_then(|origin_schema| ctx.target_schema(origin_schema))
+                    .and_then(|origin_schema| ctx.target_schema(origin_schema).or(Some(origin_schema.to_owned())))
                     .unwrap_or_else(|| ctx.schema_name().to_owned());
                 let table: Table = (prefix, m.table_name().to_string()).into();
 
