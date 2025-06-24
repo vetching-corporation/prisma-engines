@@ -23,6 +23,7 @@ pub enum AdapterName {
     LibSQL,
     BetterSQLite3,
     Planetscale,
+    Mssql,
     Unknown,
 }
 
@@ -38,6 +39,7 @@ impl FromStr for AdapterName {
                 "libsql" => Ok(Self::LibSQL),
                 "better-sqlite3" => Ok(Self::BetterSQLite3),
                 "planetscale" => Ok(Self::Planetscale),
+                "mssql" => Ok(Self::Mssql),
                 _ => Ok(Self::Unknown),
             }
         } else {
@@ -55,6 +57,9 @@ pub enum AdapterProvider {
     Postgres,
     #[cfg(feature = "sqlite")]
     Sqlite,
+    #[cfg(feature = "mssql")]
+    #[cfg_attr(target_arch = "wasm32", serde(rename = "sqlserver"))]
+    SqlServer,
 }
 
 impl AdapterProvider {
@@ -66,6 +71,8 @@ impl AdapterProvider {
             Self::Postgres => "postgresql",
             #[cfg(feature = "sqlite")]
             Self::Sqlite => "sqlite",
+            #[cfg(feature = "mssql")]
+            Self::SqlServer => "mssql",
         }
     }
 }
@@ -81,6 +88,8 @@ impl FromStr for AdapterProvider {
             "mysql" => Ok(Self::Mysql),
             #[cfg(feature = "sqlite")]
             "sqlite" => Ok(Self::Sqlite),
+            #[cfg(feature = "mssql")]
+            "sqlserver" => Ok(Self::SqlServer),
             _ => Err(format!("Unsupported adapter flavour: {:?}", s)),
         }
     }
@@ -95,6 +104,8 @@ impl From<&AdapterProvider> for SqlFamily {
             AdapterProvider::Postgres => SqlFamily::Postgres,
             #[cfg(feature = "sqlite")]
             AdapterProvider::Sqlite => SqlFamily::Sqlite,
+            #[cfg(feature = "mssql")]
+            AdapterProvider::SqlServer => SqlFamily::Mssql,
         }
     }
 }
@@ -103,16 +114,23 @@ impl From<&AdapterProvider> for SqlFamily {
 pub struct ExternalConnectionInfo {
     // TODO: `sql_family` doesn't exist in TypeScript's `ConnectionInfo` type.
     pub sql_family: SqlFamily,
-    pub schema_name: String,
+    pub schema_name: Option<String>,
     pub max_bind_values: Option<usize>,
+    pub supports_relation_joins: bool,
 }
 
 impl ExternalConnectionInfo {
-    pub fn new(sql_family: SqlFamily, schema_name: String, max_bind_values: Option<usize>) -> Self {
+    pub fn new(
+        sql_family: SqlFamily,
+        schema_name: Option<String>,
+        max_bind_values: Option<usize>,
+        supports_relation_joins: bool,
+    ) -> Self {
         ExternalConnectionInfo {
             sql_family,
             schema_name,
             max_bind_values,
+            supports_relation_joins,
         }
     }
 }

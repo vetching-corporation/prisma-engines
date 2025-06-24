@@ -76,8 +76,10 @@ pub(crate) fn connection_string(
             Some(SqlServerVersion::V2019) if is_ci => format!("sqlserver://test-db-sqlserver-2019:1433;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
             Some(SqlServerVersion::V2019) => format!("sqlserver://127.0.0.1:1433;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
 
-            Some(SqlServerVersion::V2022) if is_ci => format!("sqlserver://test-db-sqlserver-2022:1433;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
-            Some(SqlServerVersion::V2022) => format!("sqlserver://127.0.0.1:1435;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
+            Some(SqlServerVersion::V2022 | SqlServerVersion::MssqlJsWasm) if is_ci =>
+                format!("sqlserver://test-db-sqlserver-2022:1433;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
+            Some(SqlServerVersion::V2022 | SqlServerVersion::MssqlJsWasm) =>
+                format!("sqlserver://127.0.0.1:1435;{database};user=SA;password=<YourStrong@Passw0rd>;trustServerCertificate=true;isolationLevel={isolation_level}"),
 
             None => unreachable!("A versioned connector must have a concrete version to run."),
         }
@@ -319,7 +321,7 @@ impl ConnectorVersion {
     /// Determines if the connector uses a driver adapter implemented in Wasm.
     /// Do not delete! This is used because the `#[cfg(target_arch = "wasm32")]` conditional compilation
     /// directive doesn't work in the test runner.
-    fn is_wasm(&self) -> bool {
+    pub fn is_wasm(&self) -> bool {
         matches!(
             self,
             Self::Postgres(Some(PostgresVersion::PgJsWasm))
@@ -328,6 +330,7 @@ impl ConnectorVersion {
                 | Self::Sqlite(Some(SqliteVersion::LibsqlJsWasm))
                 | Self::Sqlite(Some(SqliteVersion::CloudflareD1))
                 | Self::Sqlite(Some(SqliteVersion::BetterSQLite3))
+                | Self::SqlServer(Some(SqlServerVersion::MssqlJsWasm))
         )
     }
 }

@@ -40,25 +40,23 @@ impl From<DriverAdapterError> for QuaintError {
             DriverAdapterError::LengthMismatch { column } => {
                 QuaintError::builder(ErrorKind::LengthMismatch { column: column.into() }).build()
             }
-            DriverAdapterError::UniqueConstraintViolation { fields } => {
+            DriverAdapterError::UniqueConstraintViolation { constraint } => {
                 QuaintError::builder(ErrorKind::UniqueConstraintViolation {
-                    constraint: DatabaseConstraint::Fields(fields),
+                    constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
                 })
                 .build()
             }
-            DriverAdapterError::NullConstraintViolation { fields } => {
+            DriverAdapterError::NullConstraintViolation { constraint } => {
                 QuaintError::builder(ErrorKind::NullConstraintViolation {
-                    constraint: DatabaseConstraint::Fields(fields),
+                    constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
                 })
                 .build()
             }
             DriverAdapterError::ForeignKeyConstraintViolation { constraint } => {
-                let constraint = match constraint {
-                    error::DriverAdapterConstraint::Fields(fields) => DatabaseConstraint::Fields(fields),
-                    error::DriverAdapterConstraint::Index(index) => DatabaseConstraint::Index(index),
-                    error::DriverAdapterConstraint::ForeignKey => DatabaseConstraint::ForeignKey,
-                };
-                QuaintError::builder(ErrorKind::ForeignKeyConstraintViolation { constraint }).build()
+                QuaintError::builder(ErrorKind::ForeignKeyConstraintViolation {
+                    constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
+                })
+                .build()
             }
             DriverAdapterError::DatabaseDoesNotExist { db } => {
                 QuaintError::builder(ErrorKind::DatabaseDoesNotExist { db_name: db.into() }).build()
@@ -84,6 +82,15 @@ impl From<DriverAdapterError> for QuaintError {
             DriverAdapterError::TooManyConnections { cause } => {
                 QuaintError::builder(ErrorKind::TooManyConnections(cause.into())).build()
             }
+            DriverAdapterError::ValueOutOfRange { cause } => {
+                QuaintError::builder(ErrorKind::ValueOutOfRange { message: cause }).build()
+            }
+            DriverAdapterError::MissingFullTextSearchIndex => {
+                QuaintError::builder(ErrorKind::MissingFullTextSearchIndex).build()
+            }
+            DriverAdapterError::TransactionAlreadyClosed { cause } => {
+                QuaintError::builder(ErrorKind::TransactionAlreadyClosed(cause)).build()
+            }
             DriverAdapterError::GenericJs { id } => QuaintError::external_error(id),
             #[cfg(feature = "postgresql")]
             DriverAdapterError::Postgres(e) => e.into(),
@@ -91,6 +98,8 @@ impl From<DriverAdapterError> for QuaintError {
             DriverAdapterError::Mysql(e) => e.into(),
             #[cfg(feature = "sqlite")]
             DriverAdapterError::Sqlite(e) => e.into(),
+            #[cfg(feature = "mssql")]
+            DriverAdapterError::Mssql(e) => e.into(),
             // in future, more error types would be added and we'll need to convert them to proper QuaintErrors here
         }
     }

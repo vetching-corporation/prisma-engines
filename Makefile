@@ -71,7 +71,7 @@ build-qe-wasm:
 
 build-qe-wasm-gz: build-qe-wasm
 	@cd query-engine/query-engine-wasm/pkg && \
-    for provider in postgresql mysql sqlite; do \
+    for provider in postgresql mysql sqlite sqlserver; do \
         gzip -knc $$provider/query_engine_bg.wasm > $$provider.gz; \
     done;
 
@@ -376,6 +376,14 @@ start-mssql_edge:
 dev-mssql_edge: start-mssql_edge
 	cp $(CONFIG_PATH)/sqlserver2019 $(CONFIG_FILE)
 
+dev-mssql-wasm: start-mssql_2022 build-qe-wasm build-driver-adapters-kit-qe
+	cp $(CONFIG_PATH)/sqlserver-wasm $(CONFIG_FILE)
+
+dev-mssql-qc: start-mssql_2022 build-qc-wasm build-driver-adapters-kit-qc
+	cp $(CONFIG_PATH)/sqlserver-qc $(CONFIG_FILE)
+
+test-mssql-qc: dev-mssql-qc test-qe
+
 start-mssql_2017:
 	docker compose -f docker-compose.yml up --wait -d --remove-orphans mssql-2017
 
@@ -442,7 +450,7 @@ test-driver-adapter-planetscale-wasm: test-planetscale-wasm
 
 measure-qe-wasm: build-qe-wasm-gz
 	@cd query-engine/query-engine-wasm/pkg; \
-	for provider in postgresql mysql sqlite; do \
+	for provider in postgresql mysql sqlite sqlserver; do \
 		echo "$${provider}_size=$$(cat $$provider/query_engine_bg.wasm | wc -c | tr -d ' ')" >> $(ENGINE_SIZE_OUTPUT); \
 		echo "$${provider}_size_gz=$$(cat $$provider.gz | wc -c | tr -d ' ')" >> $(ENGINE_SIZE_OUTPUT); \
 	done;

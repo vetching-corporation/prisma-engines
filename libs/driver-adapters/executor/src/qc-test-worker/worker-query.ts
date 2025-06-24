@@ -10,13 +10,7 @@ import {
   type TransactionManager,
   UserFacingError,
 } from '@prisma/client-engine-runtime'
-import {
-  ColumnType,
-  ColumnTypeEnum,
-  IsolationLevel,
-  SqlQueryable,
-  SqlResultSet,
-} from '@prisma/driver-adapter-utils'
+import { IsolationLevel, SqlQueryable } from '@prisma/driver-adapter-utils'
 import Decimal from 'decimal.js'
 
 import { JsonOutputTaggedValue } from '../engines/JsonProtocol'
@@ -106,9 +100,9 @@ class QueryPipeline {
     query: JsonProtocolQuery,
     allowTransaction: boolean,
   ) {
-    let queryPlanString: string
+    let queryPlan: QueryPlanNode
     try {
-      queryPlanString = withLocalPanicHandler(() =>
+      queryPlan = withLocalPanicHandler(() =>
         this.compiler.compile(safeJsonStringify(query)),
       )
     } catch (error) {
@@ -118,8 +112,6 @@ class QueryPipeline {
         throw error
       }
     }
-
-    const queryPlan = JSON.parse(queryPlanString) as QueryPlanNode
 
     debug('🟢 Query plan: ', util.inspect(queryPlan, false, null, true))
 

@@ -1,9 +1,8 @@
 use super::*;
-use crate::inputs::IfInput;
+use crate::inputs::{IfInput, UpdateManyRecordsSelectorsInput, UpdateOrCreateArgsInput, UpdateRecordSelectorsInput};
 use crate::query_graph_builder::write::utils::coerce_vec;
 use crate::{
-    query_ast::*,
-    query_graph::{Flow, Node, NodeRef, QueryGraph, QueryGraphDependency},
+    query_graph::{Flow, NodeRef, QueryGraph, QueryGraphDependency},
     ParsedInputMap, ParsedInputValue,
 };
 use crate::{DataExpectation, RowSink};
@@ -102,7 +101,7 @@ pub fn nested_upsert(
     value: ParsedInputValue<'_>,
 ) -> QueryGraphBuilderResult<()> {
     let child_model = parent_relation_field.related_model();
-    let child_model_identifier = child_model.primary_identifier();
+    let child_model_identifier = child_model.shard_aware_primary_identifier();
 
     for value in coerce_vec(value) {
         let parent_link = parent_relation_field.linking_fields();
@@ -153,7 +152,7 @@ pub fn nested_upsert(
             &if_node,
             QueryGraphDependency::ProjectedDataSinkDependency(
                 child_model_identifier.clone(),
-                RowSink::AllRows(&IfInput),
+                RowSink::All(&IfInput),
                 None,
             ),
         )?;
@@ -161,16 +160,9 @@ pub fn nested_upsert(
         graph.create_edge(
             &read_children_node,
             &update_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 child_model_identifier.clone(),
-                Box::new(move |mut update_node, mut child_ids| {
-                    if let Node::Query(Query::Write(WriteQuery::UpdateRecord(ref mut ur))) = update_node {
-                        let child_id = child_ids.pop().expect("child id should be present");
-                        ur.set_selectors(vec![child_id]);
-                    }
-
-                    Ok(update_node)
-                }),
+                RowSink::ExactlyOne(&UpdateRecordSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&child_model)
@@ -211,24 +203,16 @@ pub fn nested_upsert(
             connect::connect_records_node(graph, &parent_node, &create_node, parent_relation_field, 1)?;
         } else if parent_relation_field.is_inlined_on_enclosing_model() {
             let parent_model = parent_relation_field.model();
-            let parent_model_id = parent_model.primary_identifier();
+            let parent_model_id = parent_model.shard_aware_primary_identifier();
             let update_node = utils::update_records_node_placeholder(graph, filter, parent_model.clone());
 
             // Edge to retrieve the finder
             graph.create_edge(
                 &parent_node,
                 &update_node,
-                QueryGraphDependency::ProjectedDataDependency(
+                QueryGraphDependency::ProjectedDataSinkDependency(
                     parent_model_id,
-                    Box::new(move |mut update_node, mut parent_ids| {
-                        let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                        if let Node::Query(Query::Write(ref mut wq)) = update_node {
-                            wq.set_selectors(vec![parent_id]);
-                        }
-
-                        Ok(update_node)
-                    }),
+                    RowSink::ExactlyOne(&UpdateManyRecordsSelectorsInput),
                     Some(DataExpectation::non_empty_rows(
                         MissingRelatedRecord::builder()
                             .model(&parent_model)
@@ -244,17 +228,9 @@ pub fn nested_upsert(
             graph.create_edge(
                 &create_node,
                 &update_node,
-                QueryGraphDependency::ProjectedDataDependency(
+                QueryGraphDependency::ProjectedDataSinkDependency(
                     child_link.clone(),
-                    Box::new(move |mut update_node, mut child_links| {
-                        let child_link = child_links.pop().expect("child link should be present");
-
-                        if let Node::Query(Query::Write(ref mut wq)) = update_node {
-                            wq.inject_result_into_args(parent_link.assimilate(child_link)?);
-                        }
-
-                        Ok(update_node)
-                    }),
+                    RowSink::ExactlyOneWriteArgs(parent_link, &UpdateOrCreateArgsInput),
                     Some(DataExpectation::non_empty_rows(
                         MissingRelatedRecord::builder()
                             .model(&parent_relation_field.related_model())
@@ -273,17 +249,9 @@ pub fn nested_upsert(
             graph.create_edge(
                 &parent_node,
                 &create_node,
-                QueryGraphDependency::ProjectedDataDependency(
+                QueryGraphDependency::ProjectedDataSinkDependency(
                     parent_link,
-                    Box::new(move |mut create_node, mut parent_links| {
-                        let parent_link = parent_links.pop().expect("parent link should be present");
-
-                        if let Node::Query(Query::Write(ref mut wq)) = create_node {
-                            wq.inject_result_into_args(child_link.assimilate(parent_link)?);
-                        }
-
-                        Ok(create_node)
-                    }),
+                    RowSink::ExactlyOneWriteArgs(child_link, &UpdateOrCreateArgsInput),
                     Some(DataExpectation::non_empty_rows(
                         MissingRelatedRecord::builder()
                             .model(&parent_relation_field.model())

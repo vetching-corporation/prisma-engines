@@ -1,11 +1,11 @@
 use super::{write_args_parser::WriteArgsParser, *};
 use crate::{
-    inputs::IfInput,
+    inputs::{IfInput, RecordQueryFilterInput, UpdateRecordSelectorsInput},
     query_ast::*,
-    query_graph::{Flow, Node, QueryGraph, QueryGraphDependency},
+    query_graph::{Flow, QueryGraph, QueryGraphDependency},
     DataExpectation, ParsedField, ParsedInputMap, ParsedInputValue, ParsedObject, RowSink,
 };
-use query_structure::{IntoFilter, Model};
+use query_structure::Model;
 use schema::QuerySchema;
 
 /// Handles a top-level upsert
@@ -96,7 +96,7 @@ pub(crate) fn upsert_record(
 
     graph.flag_transactional();
 
-    let model_id = model.primary_identifier();
+    let model_id = model.shard_aware_primary_identifier();
 
     let read_parent_records = utils::read_ids_infallible(model.clone(), model_id.clone(), filter.clone());
     let read_parent_records_node = graph.create_node(read_parent_records);
@@ -123,7 +123,7 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &read_parent_records_node,
         &if_node,
-        QueryGraphDependency::ProjectedDataSinkDependency(model_id.clone(), RowSink::AllRows(&IfInput), None),
+        QueryGraphDependency::ProjectedDataSinkDependency(model_id.clone(), RowSink::All(&IfInput), None),
     )?;
 
     // In case the connector doesn't support referential integrity, we add a subtree to the graph that emulates the ON_UPDATE referential action.
@@ -151,15 +151,9 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &read_parent_records_node,
         &update_node,
-        QueryGraphDependency::ProjectedDataDependency(
+        QueryGraphDependency::ProjectedDataSinkDependency(
             model_id.clone(),
-            Box::new(move |mut update_node, parent_ids| {
-                if let Node::Query(Query::Write(WriteQuery::UpdateRecord(ref mut ur))) = update_node {
-                    ur.set_selectors(parent_ids);
-                }
-
-                Ok(update_node)
-            }),
+            RowSink::ExactlyOne(&UpdateRecordSelectorsInput),
             None,
         ),
     )?;
@@ -167,17 +161,9 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &update_node,
         &read_node_update,
-        QueryGraphDependency::ProjectedDataDependency(
+        QueryGraphDependency::ProjectedDataSinkDependency(
             model_id.clone(),
-            Box::new(move |mut read_node_update, mut parent_ids| {
-                let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                if let Node::Query(Query::Read(ReadQuery::RecordQuery(ref mut rq))) = read_node_update {
-                    rq.add_filter(parent_id.filter());
-                };
-
-                Ok(read_node_update)
-            }),
+            RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
             Some(DataExpectation::non_empty_rows(
                 MissingRecord::builder().operation(DataOperation::Upsert).build(),
             )),
@@ -187,17 +173,9 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &create_node,
         &read_node_create,
-        QueryGraphDependency::ProjectedDataDependency(
+        QueryGraphDependency::ProjectedDataSinkDependency(
             model_id,
-            Box::new(move |mut read_node_create, mut parent_ids| {
-                let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                if let Node::Query(Query::Read(ReadQuery::RecordQuery(ref mut rq))) = read_node_create {
-                    rq.add_filter(parent_id.filter());
-                };
-
-                Ok(read_node_create)
-            }),
+            RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
             Some(DataExpectation::non_empty_rows(
                 MissingRecord::builder().operation(DataOperation::Upsert).build(),
             )),

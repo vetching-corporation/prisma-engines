@@ -11,9 +11,12 @@ use query::translate_query;
 use query_builder::QueryBuilder;
 use query_core::{
     Computation, EdgeRef, Flow, Node, NodeRef, Query, QueryGraph, QueryGraphBuilderError, QueryGraphDependency,
-    QueryGraphError, RowSink,
+    QueryGraphError, RowCountSink, RowSink,
 };
-use query_structure::{FieldSelection, Placeholder, PrismaValue, PrismaValueType, SelectedField, SelectionResult};
+use query_structure::{
+    FieldSelection, FieldTypeInformation, IntoFilter, Placeholder, PrismaValue, PrismaValueType, SelectedField,
+    SelectionResult,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -290,11 +293,27 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
                     let fields = self.process_edge_selections(edge, &node, selection);
 
                     match sink {
-                        RowSink::AllRows(field) | RowSink::SingleRowArray(field) => {
+                        RowSink::All(field) | RowSink::ExactlyOne(field) | RowSink::AtMostOne(field) => {
                             *field.node_input_field(&mut node) = vec![SelectionResult::new(fields)];
                         }
-                        RowSink::SingleRow(field) => {
+                        RowSink::Single(field) => {
                             *field.node_input_field(&mut node) = SelectionResult::new(fields);
+                        }
+                        RowSink::ExactlyOneFilter(field) => {
+                            *field.node_input_field(&mut node) = SelectionResult::new(fields).filter();
+                        }
+                        RowSink::ExactlyOneWriteArgs(selection, field) => {
+                            let result = SelectionResult::new(fields);
+                            let model = node.as_query().map(Query::model);
+                            let args = field.node_input_field(&mut node);
+                            for arg in args {
+                                arg.inject(selection.assimilate(result.clone()).map_err(|err| {
+                                    TranslateError::GraphBuildError(QueryGraphBuilderError::DomainError(err))
+                                })?);
+                                if let Some(model) = &model {
+                                    arg.update_datetimes(model);
+                                }
+                            }
                         }
                         RowSink::Discard => {}
                     }
@@ -395,7 +414,9 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
             .incoming_edges(&node)
             .into_iter()
             .filter_map(|edge| {
-                let Some(QueryGraphDependency::DataDependency(_, expectation)) = self.graph.edge_content(&edge) else {
+                let Some(QueryGraphDependency::DataDependency(RowCountSink::Discard, expectation)) =
+                    self.graph.edge_content(&edge)
+                else {
                     return None;
                 };
                 let mut expr = Expression::Get {
@@ -424,11 +445,8 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
 
                 let requires_unique = matches!(
                     edge_content,
-                    Some(QueryGraphDependency::ProjectedDataSinkDependency(
-                        _,
-                        RowSink::SingleRow(_),
-                        _
-                    ))
+                    Some(QueryGraphDependency::ProjectedDataSinkDependency(_, sink, _))
+                        if sink.is_unique()
                 );
 
                 let source = self.graph.edge_source(&edge);
@@ -454,7 +472,7 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
                             Binding::new(
                                 binding::projected_dependency(source, field),
                                 Expression::MapField {
-                                    field: field.prisma_name().into_owned(),
+                                    field: field.db_name().into(),
                                     records: Expression::Get {
                                         name: binding::node_result(source),
                                     }
@@ -500,10 +518,22 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
         selection: FieldSelection,
     ) -> Vec<(SelectedField, PrismaValue)> {
         let bindings_refer_to_fields = matches!(node, Node::Query(_));
+        let binding_is_unique = matches!(node, Node::Query(q) if q.is_unique());
 
         selection
             .selections()
             .map(|field| {
+                let r#type = field
+                    .type_info()
+                    .as_ref()
+                    .map(FieldTypeInformation::to_prisma_type)
+                    .unwrap_or(PrismaValueType::Any);
+                let r#type = if binding_is_unique {
+                    r#type
+                } else {
+                    PrismaValueType::Array(r#type.into())
+                };
+
                 (
                     field.clone(),
                     PrismaValue::Placeholder(Placeholder {
@@ -512,7 +542,7 @@ impl<'a, 'b> NodeTranslator<'a, 'b> {
                         } else {
                             binding::node_result(self.graph.edge_source(edge))
                         },
-                        r#type: PrismaValueType::Any,
+                        r#type,
                     }),
                 )
             })

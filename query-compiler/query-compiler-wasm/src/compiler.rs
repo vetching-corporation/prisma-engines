@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tsify::Tsify;
 use user_facing_errors::UserFacingError;
-use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 use sql_query_builder::DynamicSchema;
 
 use crate::params::{AdapterProvider, JsConnectionInfo};
@@ -22,6 +22,8 @@ const CONNECTOR_REGISTRY: ConnectorRegistry<'_> = &[
     psl::builtin_connectors::MYSQL,
     #[cfg(feature = "sqlite")]
     psl::builtin_connectors::SQLITE,
+    #[cfg(feature = "mssql")]
+    psl::builtin_connectors::MSSQL,
 ];
 
 #[wasm_bindgen]
@@ -44,7 +46,7 @@ fn register_panic_hook() {
     SET_HOOK.call_once(|| {
         std::panic::set_hook(Box::new(|info| {
             let message = &info.to_string();
-            prisma_set_wasm_panic_message(message);
+            unsafe { prisma_set_wasm_panic_message(message) };
         }));
     });
 }
@@ -78,7 +80,9 @@ impl QueryCompiler {
 
         // Note: if we used `psl::validate`, we'd add ~1MB to the Wasm artifact (before gzip).
         let schema = Arc::new(psl::parse_without_validation(datamodel.into(), CONNECTOR_REGISTRY));
-        let schema = Arc::new(schema::build(schema, true));
+        let schema = Arc::new(
+            schema::build(schema, true).with_db_version_supports_join_strategy(connection_info.supports_relation_joins),
+        );
 
         tracing::info!(git_hash = env!("GIT_HASH"), "Starting query-compiler-wasm");
         register_panic_hook();
@@ -97,7 +101,7 @@ impl QueryCompiler {
      * Note: Add `schema_request` parameter to support dynamic schema
      */
     #[wasm_bindgen]
-    pub fn compile(&self, request: String, schema_request: Option<String>) -> Result<String, JsCompileError> {
+    pub fn compile(&self, request: String, schema_request: Option<String>) -> Result<JsValue, JsCompileError> {
         with_sync_unevaluated_request_context(move || {
             let request = RequestBody::try_from_str(&request, self.protocol)?;
             let QueryDocument::Single(op) = request.into_doc(&self.schema)? else {
@@ -105,7 +109,7 @@ impl QueryCompiler {
             };
             let dynamic_schema = DynamicSchema::from_str(schema_request);
             let plan = query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema)?;
-            Ok(serde_json::to_string(&plan)?)
+            Ok(plan.serialize(&shared_wasm::RESPONSE_SERIALIZER)?)
         })
     }
 
@@ -116,14 +120,14 @@ impl QueryCompiler {
      * Note: Add `schema_request` parameter to support dynamic schema
      */
     #[wasm_bindgen(js_name = compileBatch)]
-    pub fn compile_batch(&self, request: String, schema_request: Option<String>) -> Result<BatchResponse, JsCompileError> {
-        with_sync_unevaluated_request_context(move || {
+        pub fn compile_batch(&self, request: String, schema_request: Option<String>) -> Result<JsValue, JsCompileError> {
+            with_sync_unevaluated_request_context(move || {
             let request = RequestBody::try_from_str(&request, self.protocol)?;
             let dynamic_schema = DynamicSchema::from_str(schema_request);
-            match request.into_doc(&self.schema)? {
+            let response = match request.into_doc(&self.schema)? {
                 QueryDocument::Single(op) => {
                     let plan = query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema.clone())?;
-                    Ok(BatchResponse::Multi { plans: vec![plan] })
+                    BatchResponse::Multi { plans: vec![plan] }
                 }
                 QueryDocument::Multi(batch) => match batch.compact(&self.schema) {
                     BatchDocument::Multi(operations, _) => {
@@ -131,21 +135,22 @@ impl QueryCompiler {
                             .into_iter()
                             .map(|op| query_compiler::compile_with_dynamic_schema(&self.schema, op, &self.connection_info, dynamic_schema.clone()))
                             .collect::<Result<Vec<_>, _>>()?;
-                        Ok(BatchResponse::Multi { plans })
+                        BatchResponse::Multi { plans }
                     }
                     BatchDocument::Compact(compacted) => {
                         let expect_non_empty = compacted.throw_on_empty();
                         let plan = query_compiler::compile_with_dynamic_schema(&self.schema, compacted.operation, &self.connection_info, dynamic_schema.clone())?;
-                        Ok(BatchResponse::Compacted {
+                        BatchResponse::Compacted {
                             plan,
                             arguments: compacted.arguments,
                             nested_selection: compacted.nested_selection,
                             keys: compacted.keys,
                             expect_non_empty,
-                        })
+                        }
                     }
                 },
-            }
+            };
+            Ok(response.serialize(&shared_wasm::RESPONSE_SERIALIZER)?)
         })
     }
 }
@@ -243,6 +248,16 @@ impl From<serde_json::Error> for JsCompileError {
     fn from(error: serde_json::Error) -> Self {
         JsCompileError {
             message: format!("JSON Error: {error}"),
+            code: None,
+            meta: None,
+        }
+    }
+}
+
+impl From<tsify::serde_wasm_bindgen::Error> for JsCompileError {
+    fn from(error: tsify::serde_wasm_bindgen::Error) -> Self {
+        JsCompileError {
+            message: format!("Serialization Error: {error}"),
             code: None,
             meta: None,
         }

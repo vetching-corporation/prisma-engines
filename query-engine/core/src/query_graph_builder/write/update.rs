@@ -1,4 +1,5 @@
 use super::*;
+use crate::inputs::RecordQueryFilterInput;
 use crate::query_graph_builder::write::limit::validate_limit;
 use crate::query_graph_builder::write::write_args_parser::*;
 use crate::{
@@ -6,9 +7,9 @@ use crate::{
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
     ArgumentListLookup, ParsedField, ParsedInputMap,
 };
-use crate::{DataExpectation, ParsedObject};
+use crate::{DataExpectation, ParsedObject, RowSink};
 use psl::datamodel_connector::ConnectorCapability;
-use query_structure::{Filter, IntoFilter, Model};
+use query_structure::{Filter, Model};
 use schema::{constants::args, QuerySchema};
 use std::convert::TryInto;
 
@@ -41,7 +42,7 @@ pub(crate) fn update_record(
     if query_schema.relation_mode().is_prisma() {
         let read_parent_node = graph.create_node(utils::read_id_infallible(
             model.clone(),
-            model.primary_identifier(),
+            model.shard_aware_primary_identifier(),
             filter,
         ));
 
@@ -51,7 +52,7 @@ pub(crate) fn update_record(
             &read_parent_node,
             &update_node,
             QueryGraphDependency::ProjectedDataDependency(
-                model.primary_identifier(),
+                model.shard_aware_primary_identifier(),
                 Box::new(move |mut update_node, parent_ids| {
                     if let Node::Query(Query::Write(WriteQuery::UpdateRecord(ref mut ur))) = update_node {
                         ur.set_record_filter(parent_ids.into());
@@ -59,7 +60,9 @@ pub(crate) fn update_record(
 
                     Ok(update_node)
                 }),
-                None,
+                Some(DataExpectation::non_empty_rows(
+                    MissingRecord::builder().operation(DataOperation::Update).build(),
+                )),
             ),
         )?;
     }
@@ -75,7 +78,7 @@ pub(crate) fn update_record(
             &update_node,
             &check_node,
             QueryGraphDependency::ProjectedDataDependency(
-                model.primary_identifier(),
+                model.shard_aware_primary_identifier(),
                 Box::new(move |read_node, _| Ok(read_node)),
                 Some(DataExpectation::non_empty_rows(
                     MissingRecord::builder().operation(DataOperation::Update).build(),
@@ -94,17 +97,9 @@ pub(crate) fn update_record(
         graph.create_edge(
             &update_node,
             &read_node,
-            QueryGraphDependency::ProjectedDataDependency(
-                model.primary_identifier(),
-                Box::new(move |mut read_node, mut parent_ids| {
-                    let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                    if let Node::Query(Query::Read(ReadQuery::RecordQuery(ref mut rq))) = read_node {
-                        rq.add_filter(parent_id.filter());
-                    };
-
-                    Ok(read_node)
-                }),
+            QueryGraphDependency::ProjectedDataSinkDependency(
+                model.shard_aware_primary_identifier(),
+                RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRecord::builder().operation(DataOperation::Update).build(),
                 )),
@@ -154,7 +149,7 @@ pub fn update_many_records(
     } else {
         let pre_read_node = graph.create_node(utils::read_ids_infallible(
             model.clone(),
-            model.primary_identifier(),
+            model.shard_aware_primary_identifier(),
             filter,
         ));
         let update_many_node = update_many_record_node(
@@ -176,7 +171,7 @@ pub fn update_many_records(
             &pre_read_node,
             &update_many_node,
             QueryGraphDependency::ProjectedDataDependency(
-                model.primary_identifier(),
+                model.shard_aware_primary_identifier(),
                 Box::new(move |mut update_node, parent_ids| {
                     if let Node::Query(Query::Write(WriteQuery::UpdateManyRecords(ref mut ur))) = update_node {
                         ur.record_filter = parent_ids.into();
@@ -233,7 +228,7 @@ where
             )))
         // Otherwise, fallback to the primary identifier, that will be used to fulfill other nested operations requirements
         } else {
-            let selected_fields = model.primary_identifier();
+            let selected_fields = model.shard_aware_primary_identifier();
             let selection_order = selected_fields.db_names().collect();
 
             Query::Write(WriteQuery::UpdateRecord(UpdateRecord::WithSelection(

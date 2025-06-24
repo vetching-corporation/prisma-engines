@@ -44,6 +44,11 @@ pub(crate) fn translate_read_query(query: ReadQuery, builder: &dyn QueryBuilder)
         }
 
         ReadQuery::ManyRecordsQuery(mut mrq) => {
+            // Skip the query entirely if the take is 0.
+            if mrq.args.take == Take::Some(0) {
+                return Ok(Expression::Concat(vec![]));
+            }
+
             let selected_fields = match mrq.relation_load_strategy {
                 RelationLoadStrategy::Join => mrq.selected_fields.into_virtuals_last(),
                 RelationLoadStrategy::Query => mrq.selected_fields.without_relations().into_virtuals_last(),
@@ -150,7 +155,7 @@ pub(super) fn add_inmemory_join(
         .map(|sf| Binding {
             name: binding::join_parent_field(&sf),
             expr: Expression::MapField {
-                field: sf.name().to_owned(),
+                field: sf.db_name().into(),
                 records: Box::new(Expression::Get {
                     name: binding::join_parent(),
                 }),
@@ -173,7 +178,7 @@ pub(super) fn add_inmemory_join(
                 .map(|(parent_scalar, child_scalar)| {
                     let placeholder = PrismaValue::placeholder(
                         binding::join_parent_field(parent_scalar),
-                        parent_scalar.result_type().to_prisma_type(),
+                        parent_scalar.type_info().to_prisma_type(),
                     );
                     let condition = if parent.r#type().is_list() {
                         ScalarCondition::InTemplate(ConditionValue::value(placeholder))
@@ -190,7 +195,7 @@ pub(super) fn add_inmemory_join(
                 is_relation_unique: join.is_relation_unique,
                 on: left_scalars
                     .into_iter()
-                    .map(|sf| sf.name().to_owned())
+                    .map(|sf| sf.db_name().into())
                     .zip(join.into_fields())
                     .collect(),
                 parent_field: parent_field_name,
@@ -220,6 +225,11 @@ fn build_read_related_records(
     links: Vec<ConditionalLink>,
     builder: &dyn QueryBuilder,
 ) -> TranslateResult<(Expression, JoinMetadata)> {
+    // Skip the query entirely if the take is 0.
+    if rrq.args.take == Take::Some(0) {
+        return Ok((Expression::Concat(vec![]), JoinMetadata::default()));
+    }
+
     let mut linkage = RelationLinkage::new(rrq.parent_field.clone(), links);
 
     if let Some(results) = rrq.parent_results {
@@ -347,7 +357,7 @@ fn build_read_one2m_query(
                 .related_field()
                 .left_scalars()
                 .iter()
-                .map(|sf| sf.name().to_owned())
+                .map(|sf| sf.db_name().into())
                 .collect(),
             is_relation_unique: !field.arity().is_list(),
         },
@@ -374,7 +384,11 @@ fn extract_pagination(args: &mut QueryArguments) -> Pagination {
             .map(|(sf, val)| (sf.db_name().into_owned(), val.clone()))
             .collect()
     });
-    Pagination::new(cursor, args.take.abs(), args.skip)
+    Pagination::builder()
+        .maybe_cursor(cursor)
+        .maybe_take(args.take.abs())
+        .maybe_skip(args.skip)
+        .build()
 }
 
 fn extract_distinct_by(args: &mut QueryArguments) -> Vec<String> {
@@ -382,7 +396,7 @@ fn extract_distinct_by(args: &mut QueryArguments) -> Vec<String> {
     distinct.db_names().collect_vec()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 struct JoinMetadata {
     fields: Vec<String>,
     is_relation_unique: bool,
