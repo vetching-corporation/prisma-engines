@@ -44,7 +44,7 @@ fn register_panic_hook() {
     SET_HOOK.call_once(|| {
         std::panic::set_hook(Box::new(|info| {
             let message = &info.to_string();
-            prisma_set_wasm_panic_message(message);
+            unsafe { prisma_set_wasm_panic_message(message) };
         }));
     });
 }

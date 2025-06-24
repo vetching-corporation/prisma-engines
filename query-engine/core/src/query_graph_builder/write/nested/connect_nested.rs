@@ -1,11 +1,11 @@
 use super::*;
 use crate::{
-    query_ast::*,
+    inputs::{UpdateManyRecordsSelectorsInput, UpdateOrCreateArgsInput},
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    DataExpectation, ParsedInputMap, ParsedInputValue, RowCountSink,
+    DataExpectation, ParsedInputMap, ParsedInputValue, RowCountSink, RowSink,
 };
 use itertools::Itertools;
-use query_structure::{Filter, IntoFilter, Model, RelationFieldRef};
+use query_structure::{Filter, Model, RelationFieldRef};
 use std::convert::TryInto;
 
 /// Handles nested connect cases.
@@ -79,7 +79,11 @@ fn handle_many_to_many(
     child_model: &Model,
 ) -> QueryGraphBuilderResult<()> {
     let expected_connects = filter.size();
-    let child_read_query = utils::read_ids_infallible(child_model.clone(), child_model.primary_identifier(), filter);
+    let child_read_query = utils::read_ids_infallible(
+        child_model.clone(),
+        child_model.shard_aware_primary_identifier(),
+        filter,
+    );
     let child_node = graph.create_node(child_read_query);
 
     graph.create_edge(&parent_node, &child_node, QueryGraphDependency::ExecutionOrder)?;
@@ -169,17 +173,9 @@ fn handle_one_to_many(
         graph.create_edge(
             &parent_node,
             &read_children_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 child_link,
-                Box::new(move |mut read_children_node, mut child_links| {
-                    let child_link = child_links.pop().expect("child link should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = read_children_node {
-                        wq.inject_result_into_args(parent_link.assimilate(child_link)?);
-                    }
-
-                    Ok(read_children_node)
-                }),
+                RowSink::ExactlyOneWriteArgs(parent_link, &UpdateOrCreateArgsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(child_model)
@@ -198,17 +194,9 @@ fn handle_one_to_many(
         graph.create_edge(
             &parent_node,
             &update_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 parent_link,
-                Box::new(move |mut update_node, mut parent_links| {
-                    let parent_link = parent_links.pop().expect("parent link should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_node {
-                        wq.inject_result_into_args(child_link.assimilate(parent_link)?)
-                    }
-
-                    Ok(update_node)
-                }),
+                RowSink::ExactlyOneWriteArgs(child_link, &UpdateOrCreateArgsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&parent_relation_field.model())
@@ -407,22 +395,17 @@ fn handle_one_to_one_parent_update(
 
         let parent_linking_fields = parent_relation_field.linking_fields();
         let child_linking_fields = parent_relation_field.related_field().linking_fields();
-        let child_model_identifier = parent_relation_field.related_field().model().primary_identifier();
+        let child_model_identifier = parent_relation_field
+            .related_field()
+            .model()
+            .shard_aware_primary_identifier();
 
         graph.create_edge(
             &read_new_child_node,
             &update_children_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 child_model_identifier,
-                Box::new(move |mut update_children_node, mut child_ids| {
-                    let child_id = child_ids.pop().expect("child id should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
-                        wq.add_filter(child_id.filter());
-                    }
-
-                    Ok(update_children_node)
-                }),
+                RowSink::ExactlyOne(&UpdateManyRecordsSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&child_model.clone())
@@ -442,16 +425,9 @@ fn handle_one_to_one_parent_update(
         graph.create_edge(
             &parent_node,
             &update_children_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 parent_linking_fields,
-                Box::new(move |mut update_children_node, mut parent_links| {
-                    let parent_link = parent_links.pop().expect("parent link should be present");
-                    if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
-                        wq.inject_result_into_args(child_linking_fields.assimilate(parent_link)?);
-                    }
-
-                    Ok(update_children_node)
-                }),
+                RowSink::ExactlyOneWriteArgs(child_linking_fields, &UpdateOrCreateArgsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&parent_relation_field.model())
@@ -472,17 +448,9 @@ fn handle_one_to_one_parent_update(
         graph.create_edge(
             &read_new_child_node,
             &update_parent_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 child_linking_fields,
-                Box::new(move |mut update_parent_node, mut child_links| {
-                    let child_link = child_links.pop().expect("child link should be provided");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_parent_node {
-                        wq.inject_result_into_args(parent_linking_fields.assimilate(child_link)?);
-                    }
-
-                    Ok(update_parent_node)
-                }),
+                RowSink::ExactlyOneWriteArgs(parent_linking_fields, &UpdateOrCreateArgsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&parent_model)
@@ -494,7 +462,7 @@ fn handle_one_to_one_parent_update(
             ),
         )?;
 
-        let parent_model_identifier = parent_relation_field.model().primary_identifier();
+        let parent_model_identifier = parent_relation_field.model().shard_aware_primary_identifier();
         graph.create_edge(
             &idempotent_check_node,
             &update_parent_node,
@@ -504,17 +472,9 @@ fn handle_one_to_one_parent_update(
         graph.create_edge(
             &parent_node,
             &update_parent_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 parent_model_identifier,
-                Box::new(move |mut update_parent_node, mut parent_ids| {
-                    let parent_id = parent_ids.pop().expect("parent id should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_parent_node {
-                        wq.add_filter(parent_id.filter());
-                    }
-
-                    Ok(update_parent_node)
-                }),
+                RowSink::ExactlyOne(&UpdateManyRecordsSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&parent_model)
@@ -560,20 +520,14 @@ fn handle_one_to_one_parent_create(
     graph.create_edge(
         &parent_node,
         &read_new_child_node,
-        QueryGraphDependency::ProjectedDataDependency(
+        QueryGraphDependency::ProjectedDataSinkDependency(
             child_linking_fields,
-            Box::new(move |mut read_new_child_node, mut child_links| {
-                // This takes care of cases where the relation is inlined, CREATE ONLY. See doc comment for explanation.
-                if relation_inlined_parent {
-                    let child_link = child_links.pop().expect("child link should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = read_new_child_node {
-                        wq.inject_result_into_args(parent_linking_fields.assimilate(child_link)?);
-                    }
-                }
-
-                Ok(read_new_child_node)
-            }),
+            // This takes care of cases where the relation is inlined, CREATE ONLY. See doc comment for explanation.
+            if relation_inlined_parent {
+                RowSink::ExactlyOneWriteArgs(parent_linking_fields, &UpdateOrCreateArgsInput)
+            } else {
+                RowSink::Discard
+            },
             Some(DataExpectation::non_empty_rows(
                 MissingRelatedRecord::builder()
                     .model(child_model)
@@ -593,22 +547,17 @@ fn handle_one_to_one_parent_create(
 
         let parent_linking_fields = parent_relation_field.linking_fields();
         let child_linking_fields = parent_relation_field.related_field().linking_fields();
-        let child_model_identifier = parent_relation_field.related_field().model().primary_identifier();
+        let child_model_identifier = parent_relation_field
+            .related_field()
+            .model()
+            .shard_aware_primary_identifier();
 
         graph.create_edge(
             &read_new_child_node,
             &update_children_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 child_model_identifier,
-                Box::new(move |mut update_children_node, mut child_ids| {
-                    let child_id = child_ids.pop().expect("child id should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
-                        wq.add_filter(child_id.filter());
-                    }
-
-                    Ok(update_children_node)
-                }),
+                RowSink::ExactlyOne(&UpdateManyRecordsSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(child_model)
@@ -622,17 +571,9 @@ fn handle_one_to_one_parent_create(
         graph.create_edge(
             &parent_node,
             &update_children_node,
-            QueryGraphDependency::ProjectedDataDependency(
+            QueryGraphDependency::ProjectedDataSinkDependency(
                 parent_linking_fields,
-                Box::new(move |mut update_children_node, mut parent_links| {
-                    let parent_link = parent_links.pop().expect("parent link should be present");
-
-                    if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
-                        wq.inject_result_into_args(child_linking_fields.assimilate(parent_link)?);
-                    }
-
-                    Ok(update_children_node)
-                }),
+                RowSink::ExactlyOneWriteArgs(child_linking_fields, &UpdateOrCreateArgsInput),
                 Some(DataExpectation::non_empty_rows(
                     MissingRelatedRecord::builder()
                         .model(&parent_relation_field.model())

@@ -1,7 +1,7 @@
-use crate::queryable::JsQueryable;
 use crate::send_future::UnsafeFuture;
 use crate::types::JsConnectionInfo;
 pub use crate::types::{JsResultSet, Query, TransactionOptions};
+use crate::{conversion::MaybeDefined, queryable::JsQueryable};
 use crate::{
     from_js_value, get_named_property, get_optional_named_property, to_rust_str, AdapterMethod, JsObject, JsResult,
     JsString, JsTransaction,
@@ -55,8 +55,8 @@ pub(crate) struct DriverProxy {
     /// Retrieve driver-specific info, such as the maximum number of query parameters
     get_connection_info: Option<AdapterMethod<(), JsConnectionInfo>>,
 
-    /// Start a new transaction.
-    start_transaction: AdapterMethod<Option<String>, JsTransaction>,
+    /// Start a new transaction with a specific isolation level.
+    start_transaction: AdapterMethod<MaybeDefined<String>, JsTransaction>,
 
     /// Dispose of the underlying driver.
     dispose: AdapterMethod<(), ()>,
@@ -158,7 +158,7 @@ impl DriverProxy {
     async fn start_transaction_inner(&self, isolation: Option<IsolationLevel>) -> quaint::Result<Box<JsTransaction>> {
         let tx = self
             .start_transaction
-            .call_as_async(isolation.map(|lvl| lvl.to_string()))
+            .call_as_async(isolation.map(|lvl| lvl.to_string()).into())
             .await?;
 
         // Decrement for this gauge is done in JsTransaction::commit/JsTransaction::rollback

@@ -17,9 +17,9 @@ pub struct Sqlite<'a> {
 }
 
 impl<'a> Sqlite<'a> {
-    /// Name of the function used to view the version of the database.
-    pub const fn version_fn() -> &'static str {
-        "sqlite_version"
+    /// Expression that evaluates to the SQLite version.
+    pub const fn version_expr() -> &'static str {
+        "sqlite_version()"
     }
 
     fn returning(&mut self, returning: Option<Vec<Column<'a>>>) -> visitor::Result {
@@ -189,7 +189,7 @@ impl<'a> Visitor<'a> for Sqlite<'a> {
 
                 self.write(")")?;
                 self.write(" VALUES ")?;
-                self.query_template.write_parameter_tuple_list();
+                self.query_template.write_parameter_tuple_list("(", ",", ")", ",");
                 self.query_template.parameters.push(row);
             }
             Expression {

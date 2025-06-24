@@ -4,7 +4,9 @@
 //! without a valid schema or database connection for commands like createDatabase and diff.
 
 use crate::{commands, parse_configuration_multi, CoreError, CoreResult, GenericApi, SchemaContainerExt};
+use ::commands::MigrationSchemaCache;
 use enumflags2::BitFlags;
+use futures::stream::{FuturesUnordered, StreamExt};
 use json_rpc::types::*;
 use psl::{parser_database::SourceFile, PreviewFeature};
 use schema_connector::{ConnectorError, ConnectorHost, IntrospectionResult, Namespaces, SchemaConnector};
@@ -15,7 +17,7 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing_futures::{Instrument, WithSubscriber};
 
 /// The container for the state of the schema engine. It can contain one or more connectors
@@ -35,6 +37,8 @@ pub(crate) struct EngineState {
     //
     // To a channel leading to a spawned MigrationConnector.
     connectors: Mutex<HashMap<ConnectorRequestType, mpsc::Sender<ErasedConnectorRequest>>>,
+    /// The cache for DatabaseSchemas based of migration directories to avoid redundant work during `prisma migrate dev`.
+    migration_schema_cache: Arc<Mutex<MigrationSchemaCache>>,
 }
 
 impl EngineState {
@@ -76,6 +80,7 @@ impl EngineState {
             initial_datamodel: initial_datamodels.as_deref().map(psl::validate_multi_file),
             host: host.unwrap_or_else(|| Arc::new(schema_connector::EmptyHost)),
             connectors: Default::default(),
+            migration_schema_cache: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -248,13 +253,19 @@ impl GenericApi for EngineState {
     }
 
     async fn create_migration(&self, input: CreateMigrationInput) -> CoreResult<CreateMigrationOutput> {
+        let migration_schema_cache: Arc<Mutex<MigrationSchemaCache>> = self.migration_schema_cache.clone();
         self.with_default_connector(Box::new(move |connector| {
             let span = tracing::info_span!(
                 "CreateMigration",
                 migration_name = input.migration_name.as_str(),
                 draft = input.draft,
             );
-            Box::pin(commands::create_migration(input, connector).instrument(span))
+            Box::pin(async move {
+                let mut migration_schema_cache = migration_schema_cache.lock().await;
+                commands::create_migration(input, connector, &mut migration_schema_cache)
+                    .instrument(span)
+                    .await
+            })
         }))
         .await
     }
@@ -275,9 +286,11 @@ impl GenericApi for EngineState {
 
     async fn dev_diagnostic(&self, input: DevDiagnosticInput) -> CoreResult<DevDiagnosticOutput> {
         let namespaces = self.namespaces();
+        let migration_schema_cache: Arc<Mutex<MigrationSchemaCache>> = self.migration_schema_cache.clone();
         self.with_default_connector(Box::new(move |connector| {
             Box::pin(async move {
-                commands::dev_diagnostic_cli(input, namespaces, connector)
+                let mut migration_schema_cache = migration_schema_cache.lock().await;
+                commands::dev_diagnostic_cli(input, namespaces, connector, &mut migration_schema_cache)
                     .instrument(tracing::info_span!("DevDiagnostic"))
                     .await
             })
@@ -299,9 +312,11 @@ impl GenericApi for EngineState {
         input: commands::DiagnoseMigrationHistoryInput,
     ) -> CoreResult<commands::DiagnoseMigrationHistoryOutput> {
         let namespaces = self.namespaces();
+        let migration_schema_cache: Arc<Mutex<MigrationSchemaCache>> = self.migration_schema_cache.clone();
         self.with_default_connector(Box::new(move |connector| {
             Box::pin(async move {
-                commands::diagnose_migration_history_cli(input, namespaces, connector)
+                let mut migration_schema_cache = migration_schema_cache.lock().await;
+                commands::diagnose_migration_history_cli(input, namespaces, connector, &mut migration_schema_cache)
                     .instrument(tracing::info_span!("DiagnoseMigrationHistory"))
                     .await
             })
@@ -333,8 +348,14 @@ impl GenericApi for EngineState {
     }
 
     async fn evaluate_data_loss(&self, input: EvaluateDataLossInput) -> CoreResult<EvaluateDataLossOutput> {
+        let migration_schema_cache: Arc<Mutex<MigrationSchemaCache>> = self.migration_schema_cache.clone();
         self.with_default_connector(Box::new(|connector| {
-            Box::pin(commands::evaluate_data_loss(input, connector).instrument(tracing::info_span!("EvaluateDataLoss")))
+            Box::pin(async move {
+                let mut migration_schema_cache = migration_schema_cache.lock().await;
+                commands::evaluate_data_loss(input, connector, &mut migration_schema_cache)
+                    .instrument(tracing::info_span!("EvaluateDataLoss"))
+                    .await
+            })
         }))
         .await
     }
@@ -502,5 +523,32 @@ impl GenericApi for EngineState {
             Box::pin(commands::schema_push(input, connector).instrument(tracing::info_span!("SchemaPush")))
         }))
         .await
+    }
+
+    async fn dispose(&mut self) -> CoreResult<()> {
+        self.connectors
+            .lock()
+            .await
+            .drain()
+            .map(|(_, snd)| async move {
+                let (tx, rx) = oneshot::channel();
+
+                snd.send({
+                    Box::new(move |conn| {
+                        Box::pin(async move {
+                            _ = tx.send(conn.dispose().await);
+                        })
+                    })
+                })
+                .await
+                .map_err(|err| CoreError::from_msg(format!("Failed to send dispose command to connector: {err}")))?;
+
+                rx.await.map_err(|err| {
+                    CoreError::from_msg(format!("Connector did not respond to dispose command: {err}"))
+                })?
+            })
+            .collect::<FuturesUnordered<_>>()
+            .fold(Ok(()), async |acc, result| acc.and(result))
+            .await
     }
 }

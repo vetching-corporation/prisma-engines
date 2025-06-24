@@ -5,6 +5,8 @@ use query_structure::{ScalarField, SelectedField};
 
 const JOIN_PARENT: &str = "@parent";
 const DEFAULTS: &str = "@defaults";
+const GENERATED: &str = "@generated";
+const SELECTOR: &str = "@selector";
 
 const FIELD_SEPARATOR: &str = "$";
 
@@ -26,4 +28,12 @@ pub fn join_parent_field(field: &ScalarField) -> Cow<'static, str> {
 
 pub fn defaults() -> Cow<'static, str> {
     Cow::Borrowed(DEFAULTS)
+}
+
+pub fn generated(row_idx: usize, field_name: &str) -> Cow<'static, str> {
+    format!("{GENERATED}{FIELD_SEPARATOR}row{row_idx}{FIELD_SEPARATOR}{field_name}").into()
+}
+
+pub fn selector(field: &SelectedField) -> Cow<'static, str> {
+    format!("{SELECTOR}{FIELD_SEPARATOR}{}", field.prisma_name()).into()
 }

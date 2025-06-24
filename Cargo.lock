@@ -1192,6 +1192,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serde_repr",
+ "shared-wasm",
  "telemetry",
  "tokio",
  "tracing",
@@ -3828,6 +3829,7 @@ dependencies = [
 name = "query-compiler"
 version = "0.1.0"
 dependencies = [
+ "bon",
  "indexmap 2.2.2",
  "insta",
  "itertools 0.13.0",
@@ -3876,6 +3878,7 @@ dependencies = [
  "schema",
  "serde",
  "serde_json",
+ "shared-wasm",
  "sql-query-builder",
  "tracing",
  "tsify",
@@ -4864,6 +4867,7 @@ dependencies = [
  "chrono",
  "crosstarget-utils",
  "enumflags2",
+ "futures",
  "json-rpc-api",
  "jsonrpc-core",
  "mongodb-schema-connector",
@@ -4902,6 +4906,7 @@ dependencies = [
  "test-macros",
  "test-setup",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-error",
  "tracing-subscriber",
@@ -5174,6 +5179,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "900fba806f70c630b0a382d0d825e17a0f19fcd059a2ade1ff237bcddf446b31"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shared-wasm"
+version = "0.1.0"
+dependencies = [
+ "serde-wasm-bindgen",
 ]
 
 [[package]]
