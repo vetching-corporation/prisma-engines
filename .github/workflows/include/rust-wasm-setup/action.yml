@@ -1,0 +1,30 @@
+name: Rust + WASM common deps
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set default toolchain
+      shell: bash
+      run: rustup default stable
+
+    - name: Add WASM target
+      shell: bash
+      run: rustup target add wasm32-unknown-unknown
+
+    - uses: cargo-bins/cargo-binstall@main
+
+    - name: Install wasm-bindgen
+      shell: bash
+      run: cargo binstall -y wasm-bindgen-cli@0.2.100
+
+    - name: Install Binaryen (includes wasm-opt)
+      uses: jaxxstorm/action-install-gh-release@v1.14.0
+      with:
+        repo: WebAssembly/binaryen
+        tag: version_122
+        binaries-location: binaryen-version_122/bin
+        cache: true
+
+    - name: Install bc
+      shell: bash
+      run: sudo apt update && sudo apt-get install -y bc
