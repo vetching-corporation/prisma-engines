@@ -11,7 +11,7 @@ use quaint::{
     visitor,
 };
 use query_core::{Operation, QueryGraphBuilderError, schema::QuerySchema};
-use sql_query_builder::{Context, SqlQueryBuilder};
+use sql_query_builder::{Context, DynamicSchema, SqlQueryBuilder};
 use thiserror::Error;
 pub use translate::{TranslateError, translate};
 
@@ -29,12 +29,34 @@ pub enum CompileError {
     TranslateError(#[from] TranslateError),
 }
 
+
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Change `compile` function to use `compile_with_dynamic_schema` function
+ */
 pub fn compile(
     query_schema: &QuerySchema,
     query: Operation,
     connection_info: &ConnectionInfo,
 ) -> Result<Expression, CompileError> {
-    let ctx = Context::new(connection_info, None);
+    compile_with_dynamic_schema(query_schema, query, connection_info, DynamicSchema::default())
+}
+
+/**
+ * Changed by @vetching-corporation
+ * Author: nfl1ryxditimo12@gmail.com
+ * Date: 2025-06-16
+ * Note: Add `compile_with_dynamic_schema` function to support dynamic schema
+ */
+pub fn compile_with_dynamic_schema(
+    query_schema: &QuerySchema,
+    query: Operation,
+    connection_info: &ConnectionInfo,
+    dynamic_schema: DynamicSchema,
+) -> Result<Expression, CompileError> {
+    let ctx = Context::new_with_dynamic_schema(connection_info, dynamic_schema, None);
     let (graph, _serializer) = QueryGraphBuilder::new(query_schema)
         .without_eager_default_evaluation()
         .build(query)?;
