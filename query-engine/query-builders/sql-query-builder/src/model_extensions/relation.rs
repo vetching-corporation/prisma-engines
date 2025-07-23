@@ -74,9 +74,14 @@ impl AsTable for Relation {
             // a `MERGE` statement.
             walkers::RefinedRelationWalker::ImplicitManyToMany(ref m) => {
                 let mut table = Table::from(m.table_name().to_string());
-                if let Some(prefix) = m.model_a().schema_name().or_else(|| ctx.schema_name()) {
-                    table = table.database(prefix.to_owned());
-                };
+                // Changed by @vetching-corporation
+                // Author: nfl1ryxditimo12@gmail.com
+                // Date: 2025-06-16
+                // Note: Add `target_schema` function to support dynamic schema
+                let prefix = m.model_a().schema_name()
+                    .and_then(|origin_schema| ctx.target_schema(origin_schema))
+                    .unwrap_or_else(|| ctx.schema_name().unwrap_or_default().to_owned());
+                table = table.database(prefix);
                 table.add_unique_index(vec![Column::from("A"), Column::from("B")])
             }
             walkers::RefinedRelationWalker::Inline(ref m) => {
