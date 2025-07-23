@@ -3712,6 +3712,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared-wasm",
+ "sql-query-builder",
  "tracing",
  "tsify",
  "user-facing-errors",
