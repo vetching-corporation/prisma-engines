@@ -12,7 +12,8 @@ pub(crate) fn db_name_with_schema(model: &Model, ctx: &Context<'_>) -> Table<'st
     let schema_prefix = model
         .walker()
         .schema_name()
-        .and_then(|origin_schema| ctx.target_schema(origin_schema));
+        .and_then(|origin_schema| ctx.target_schema(origin_schema).or(Some(origin_schema.to_owned())))
+        .or_else(|| ctx.schema_name().map(ToOwned::to_owned));
 
     let model_db_name = model.db_name().to_owned();
 
