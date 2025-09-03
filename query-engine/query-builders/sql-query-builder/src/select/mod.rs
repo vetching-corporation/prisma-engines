@@ -342,12 +342,10 @@ pub(crate) trait JoinSelectBuilder {
 
         let related_table = rf.related_model().as_table(ctx).alias(related_table_alias.to_string());
 
-        let select = Select::from_table(related_table)
+        Select::from_table(related_table)
             .value(count(asterisk()).alias(selection_name))
             .with_join_conditions(rf, parent_alias, related_table_alias, ctx)
-            .with_filters(filter.clone(), Some(related_table_alias), ctx);
-
-        select
+            .with_filters(filter.clone(), Some(related_table_alias), ctx)
     }
 
     fn build_relation_count_query_m2m<'a>(
@@ -386,13 +384,11 @@ pub(crate) trait JoinSelectBuilder {
             )
         };
 
-        let select = Select::from_table(related_table)
+        Select::from_table(related_table)
             .value(count(asterisk()).alias(selection_name))
             .left_join(m2m_join_data)
             .and_where(aggregation_join_conditions)
-            .with_filters(filter.clone(), Some(related_table_alias), ctx);
-
-        select
+            .with_filters(filter.clone(), Some(related_table_alias), ctx)
     }
 
     fn find_compatible_virtual_for_relation<'a>(
@@ -450,12 +446,12 @@ impl<'a> SelectBuilderExt<'a> for Select<'a> {
 
     fn with_pagination(self, args: &QueryArguments, override_empty_take: Option<i64>) -> Select<'a> {
         let take = match args.take.abs() {
-            Some(_) if args.requires_inmemory_pagination_with_joins() => override_empty_take,
+            Some(_) if args.requires_inmemory_pagination(RelationLoadStrategy::Join) => override_empty_take,
             Some(take) => Some(take),
             None => override_empty_take,
         };
 
-        let skip = match args.requires_inmemory_pagination_with_joins() {
+        let skip = match args.requires_inmemory_pagination(RelationLoadStrategy::Join) {
             true => None,
             false => args.skip,
         };
@@ -465,12 +461,10 @@ impl<'a> SelectBuilderExt<'a> for Select<'a> {
             _ => self,
         };
 
-        let select = match skip {
+        match skip {
             Some(skip) if !args.ignore_skip => select.offset(skip as usize),
             _ => select,
-        };
-
-        select
+        }
     }
 
     fn with_ordering(self, args: &QueryArguments, parent_alias: Option<String>, ctx: &Context<'_>) -> Select<'a> {
@@ -489,7 +483,7 @@ impl<'a> SelectBuilderExt<'a> for Select<'a> {
     }
 
     fn with_distinct(self, args: &QueryArguments, table_alias: Alias) -> Select<'a> {
-        if !args.can_distinct_in_db_with_joins() {
+        if !args.can_distinct_in_db(RelationLoadStrategy::Join) {
             return self;
         }
 
@@ -629,7 +623,7 @@ fn distinct_selection(rs: &RelationSelection) -> FieldSelection {
 
 fn json_obj_selections(rs: &RelationSelection) -> impl Iterator<Item = &SelectedField> + '_ {
     match rs.args.distinct.as_ref() {
-        Some(distinct) if rs.args.requires_inmemory_distinct_with_joins() => {
+        Some(distinct) if rs.args.requires_inmemory_distinct(RelationLoadStrategy::Join) => {
             Either::Left(rs.selections.iter().chain(distinct.selections()).unique())
         }
         _ => Either::Right(rs.selections.iter()),

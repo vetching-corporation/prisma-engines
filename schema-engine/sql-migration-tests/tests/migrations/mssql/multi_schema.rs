@@ -6,11 +6,7 @@ use sql_schema_describer::DefaultValue;
 
 // This is the only "top" level test in this module. It defines a list of tests and executes them.
 // If you want to look at the tests, see the `tests` variable below.
-#[test_connector(
-    tags(Mssql, Mssql2019, Mssql2017),
-    preview_features("multiSchema"),
-    namespaces("one", "two")
-)]
+#[test_connector(tags(Mssql, Mssql2019, Mssql2017), namespaces("one", "two"))]
 fn multi_schema_tests(_api: TestApi) {
     let namespaces: &'static [&'static str] = &["one", "two"];
     let base_schema = indoc! {r#"
@@ -21,8 +17,7 @@ fn multi_schema_tests(_api: TestApi) {
         }
 
         generator js {
-          provider        = "prisma-client-js"
-          previewFeatures = ["multiSchema"]
+          provider = "prisma-client-js"
         }
     "#};
 
@@ -1060,6 +1055,11 @@ fn multi_schema_tests(_api: TestApi) {
                       id Int @id
                       name String
                       @@schema("one")
+                    }
+                    model Second {
+                      id Int @id
+                      name String
+                      @@schema("two")
                     }"#
                 }),
                 first: indoc! {r#""#}.into(),
@@ -1115,11 +1115,12 @@ fn multi_schema_tests(_api: TestApi) {
 
     // traverse_ is always the answer
     tests.iter_mut().filter(|t| t.skip.is_none()).for_each(|t| {
+        println!("Running test: {}", t.name);
         run_test(t);
     });
 }
 
-#[test_connector(tags(Mssql), preview_features("multiSchema"), namespaces("one", "two"))]
+#[test_connector(tags(Mssql), namespaces("one", "two"))]
 fn multi_schema_migration(api: TestApi) {
     let dm = indoc! {r#"
         datasource db {
@@ -1129,8 +1130,7 @@ fn multi_schema_migration(api: TestApi) {
         }
 
         generator js {
-          provider        = "prisma-client-js"
-          previewFeatures = ["multiSchema"]
+          provider = "prisma-client-js"
         }
 
         model A {
@@ -1163,7 +1163,7 @@ fn multi_schema_migration(api: TestApi) {
     api.apply_migrations(&dir).send_sync().assert_applied_migrations(&[]);
 }
 
-#[test_connector(tags(Mssql), preview_features("multiSchema"), namespaces("one", "two"))]
+#[test_connector(tags(Mssql), namespaces("one", "two"))]
 fn migration_with_shadow_database(api: TestApi) {
     let conn_str = std::env::var("TEST_DATABASE_URL").unwrap();
 
@@ -1185,12 +1185,12 @@ fn migration_with_shadow_database(api: TestApi) {
 
         generator js {{
           provider        = "prisma-client-javascript"
-          previewFeatures = ["multiSchema"]
         }}
     "#};
 
     let namespaces = Namespaces::from_vec(&mut vec![String::from("dbo"), String::from("one"), String::from("two")]);
 
+    api.raw_cmd("DROP DATABASE IF EXISTS shadow");
     api.raw_cmd("CREATE DATABASE shadow");
     api.reset().send_sync(namespaces.clone());
 
@@ -1228,10 +1228,10 @@ fn migration_with_shadow_database(api: TestApi) {
                 BEGIN TRAN;
 
                 -- CreateSchema
-                EXEC sp_executesql N'CREATE SCHEMA [one];';;
+                IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'one') EXEC sp_executesql N'CREATE SCHEMA [one];';
 
                 -- CreateSchema
-                EXEC sp_executesql N'CREATE SCHEMA [two];';;
+                IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'two') EXEC sp_executesql N'CREATE SCHEMA [two];';
 
                 -- CreateTable
                 CREATE TABLE [one].[A] (

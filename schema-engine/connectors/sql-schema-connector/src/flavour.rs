@@ -30,12 +30,11 @@ use crate::{
     sql_destructive_change_checker::DestructiveChangeCheckerFlavour, sql_renderer::SqlRenderer,
     sql_schema_calculator::SqlSchemaCalculatorFlavour, sql_schema_differ::SqlSchemaDifferFlavour,
 };
-use enumflags2::BitFlags;
-use psl::{PreviewFeature, PreviewFeatures, ValidatedSchema};
+use psl::{PreviewFeatures, ValidatedSchema};
 use quaint::prelude::{NativeConnectionInfo, Table};
 use schema_connector::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorError, ConnectorResult, IntrospectionContext,
-    MigrationRecord, Namespaces, PersistenceNotInitializedError,
+    BoxFuture, ConnectorError, ConnectorResult, IntrospectionContext, MigrationRecord, Namespaces,
+    PersistenceNotInitializedError, SchemaFilter, migrations_directory::Migrations,
 };
 use sql_schema_describer::SqlSchema;
 use std::fmt::Debug;
@@ -124,6 +123,11 @@ pub(crate) trait SqlDialect: Send + Sync + 'static {
         SqlSchema::default()
     }
 
+    /// The default namespace for the dialect if it supports multiple namespaces.
+    fn default_namespace(&self) -> Option<&str> {
+        None
+    }
+
     /// Optionally scan a migration script that could have been altered by users and emit warnings.
     fn scan_migration_script(&self, _script: &str) {}
 
@@ -195,7 +199,11 @@ pub(crate) trait SqlConnector: Send + Sync + Debug {
 
     /// List all visible tables in the given namespaces,
     /// including the search path.
-    fn table_names(&mut self, namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<Vec<String>>>;
+    fn table_names(
+        &mut self,
+        namespaces: Option<Namespaces>,
+        filters: SchemaFilter,
+    ) -> BoxFuture<'_, ConnectorResult<Vec<String>>>;
 
     /// Check a connection to make sure it is usable by the schema engine.
     /// This can include some set up on the database, like ensuring that the
@@ -240,17 +248,7 @@ pub(crate) trait SqlConnector: Send + Sync + Debug {
                 {
                     return Ok(Err(PersistenceNotInitializedError));
                 }
-                Err(_) => {
-                    // TODO: this is a workaround, as currently the errors thrown by Driver Adapters do not
-                    // match the known user-facing errors we expect.
-                    // We should fix this in the future.
-                    //
-                    // This used to actually yield:
-                    // ```
-                    // err @ Err(_) => err?
-                    // ```
-                    return Ok(Err(PersistenceNotInitializedError));
-                }
+                err @ Err(_) => err?,
             };
 
             let rows = rows
@@ -316,8 +314,9 @@ pub(crate) trait SqlConnector: Send + Sync + Debug {
     /// shadow database is being used - if not, we need to create a temporary one.
     fn sql_schema_from_migration_history<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         external_shadow_db: UsingExternalShadowDb,
     ) -> BoxFuture<'a, ConnectorResult<SqlSchema>>;
 
@@ -334,6 +333,10 @@ pub(crate) trait SqlConnector: Send + Sync + Debug {
 
     fn search_path(&self) -> &str;
 
+    /// The default namespaces for the connector if it supports multiple namespaces.
+    /// Should be derived from the connectors runtime configuration but can fallback to the dialect's default.
+    fn default_namespace(&self) -> Option<&str>;
+
     fn dispose(&mut self) -> BoxFuture<'_, ConnectorResult<()>>;
 }
 
@@ -343,13 +346,6 @@ fn validate_connection_infos_do_not_match(previous: &str, next: &str) -> Connect
         Err(ConnectorError::from_msg("The shadow database you configured appears to be the same as the main database. Please specify another shadow database.".into()))
     } else {
         Ok(())
-    }
-}
-
-/// Remove all usage of non-enabled preview feature elements from the SqlSchema.
-fn normalize_sql_schema(sql_schema: &mut SqlSchema, preview_features: BitFlags<PreviewFeature>) {
-    if !preview_features.contains(PreviewFeature::MultiSchema) {
-        sql_schema.clear_namespaces();
     }
 }
 

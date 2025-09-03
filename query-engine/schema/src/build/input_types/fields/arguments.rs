@@ -3,7 +3,7 @@ use constants::args;
 use input_types::objects::order_by_objects::OrderByOptions;
 use mutations::create_one;
 use objects::*;
-use query_structure::{prelude::ParentContainer, CompositeFieldRef};
+use query_structure::{CompositeFieldRef, prelude::ParentContainer};
 
 /// Builds "where" argument.
 pub(crate) fn where_argument<'a>(ctx: &'a QuerySchema, model: &Model) -> InputField<'a> {
@@ -151,21 +151,38 @@ pub(crate) fn order_by_argument(
     .optional()
 }
 
+pub(crate) fn take_argument<'a>(model: &Model) -> InputField<'a> {
+    pagination_argument(args::TAKE, model)
+}
+
+pub(crate) fn skip_argument<'a>(model: &Model) -> InputField<'a> {
+    pagination_argument(args::SKIP, model)
+}
+
+fn pagination_argument<'a>(arg: &'static str, model: &Model) -> InputField<'a> {
+    let arg = input_field(arg, vec![InputType::int()], None).optional();
+    if model.has_unique_identifier() {
+        arg
+    } else {
+        arg.with_requires_other_fields([args::ORDER_BY])
+    }
+}
+
 pub(crate) fn group_by_arguments(ctx: &QuerySchema, model: Model) -> Vec<InputField<'_>> {
     let field_enum_type = InputType::Enum(model_field_enum(&model));
     let filter_object = InputType::object(filter_objects::scalar_filter_object_type(ctx, model.clone(), true));
 
     vec![
         where_argument(ctx, &model),
-        order_by_argument(ctx, model.into(), OrderByOptions::new().with_aggregates()),
+        order_by_argument(ctx, model.clone().into(), OrderByOptions::new().with_aggregates()),
         input_field(
             args::BY,
             vec![InputType::list(field_enum_type.clone()), field_enum_type],
             None,
         ),
         input_field(args::HAVING, vec![filter_object], None).optional(),
-        input_field(args::TAKE, vec![InputType::int()], None).optional(),
-        input_field(args::SKIP, vec![InputType::int()], None).optional(),
+        take_argument(&model),
+        skip_argument(&model),
     ]
 }
 
@@ -197,32 +214,34 @@ impl<'a> ManyRecordsSelectionArgumentsBuilder<'a> {
     }
 
     pub(crate) fn build(self) -> Vec<InputField<'a>> {
-        let unique_input_type =
-            InputType::object(filter_objects::where_unique_object_type(self.ctx, self.model.clone()));
-
-        let order_by_options = OrderByOptions {
-            include_relations: true,
-            include_scalar_aggregations: false,
-            include_full_text_search: self.ctx.can_full_text_search(),
-        };
-
-        let mut args = vec![
+        [
             where_argument(self.ctx, &self.model),
-            order_by_argument(self.ctx, self.model.clone().into(), order_by_options),
-            input_field(args::CURSOR, vec![unique_input_type], None).optional(),
-            input_field(args::TAKE, vec![InputType::int()], None).optional(),
-            input_field(args::SKIP, vec![InputType::int()], None).optional(),
-        ];
-
-        if self.include_distinct {
+            order_by_argument(
+                self.ctx,
+                self.model.clone().into(),
+                OrderByOptions {
+                    include_relations: true,
+                    include_scalar_aggregations: false,
+                    include_full_text_search: self.ctx.can_full_text_search(),
+                },
+            ),
+        ]
+        .into_iter()
+        .chain(self.model.has_unique_identifier().then(|| {
+            let unique_input_type =
+                InputType::object(filter_objects::where_unique_object_type(self.ctx, self.model.clone()));
+            input_field(args::CURSOR, vec![unique_input_type], None).optional()
+        }))
+        .chain([take_argument(&self.model), skip_argument(&self.model)])
+        .chain(self.include_distinct.then(|| {
             let input_types = list_union_type(InputType::Enum(model_field_enum(&self.model)), true);
-            args.push(input_field(args::DISTINCT, input_types, None).optional());
-        }
-
-        if self.include_relation_load_strategy {
-            args.extend(relation_load_strategy_argument(self.ctx))
-        }
-
-        args
+            input_field(args::DISTINCT, input_types, None).optional()
+        }))
+        .chain(
+            self.include_relation_load_strategy
+                .then(|| relation_load_strategy_argument(self.ctx))
+                .flatten(),
+        )
+        .collect()
     }
 }

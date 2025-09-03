@@ -7,7 +7,7 @@ pub use schema_core::{
     schema_connector::Namespaces,
 };
 pub use test_macros::test_connector;
-pub use test_setup::{runtime::run_with_thread_local_runtime as tok, BitFlags, Capabilities, Tags};
+pub use test_setup::{BitFlags, Capabilities, Tags, runtime::run_with_thread_local_runtime as tok};
 
 use crate::{commands::*, multi_engine_test_api::TestApi as RootTestApi};
 use psl::{
@@ -15,11 +15,12 @@ use psl::{
     parser_database::{ScalarType, SourceFile},
 };
 use quaint::{
-    prelude::{ConnectionInfo, ResultSet},
     Value,
+    prelude::{ConnectionInfo, ResultSet},
 };
 use schema_core::{
     commands::diff_cli,
+    json_rpc::types::SchemaFilter,
     schema_connector::{BoxFuture, ConnectorHost, ConnectorResult, DiffTarget, MigrationPersistence, SchemaConnector},
 };
 use sql_schema_connector::SqlSchemaConnector;
@@ -97,6 +98,18 @@ impl TestApi {
         self.connection_info().schema_name().unwrap().to_owned()
     }
 
+    /// Creates a schema filter for the given tables and prefixes them with the default namespace if applicable.
+    pub fn namespaced_schema_filter(&self, tables: &[&str]) -> SchemaFilter {
+        let default_namespace = self.connector.default_runtime_namespace();
+        SchemaFilter {
+            external_tables: tables
+                .iter()
+                .map(|table| default_namespace.map_or(table.to_string(), |ns| format!("{ns}.{table}")))
+                .collect(),
+            external_enums: vec![],
+        }
+    }
+
     /// Plan a `createMigration` command.
     pub fn create_migration<'a>(
         &'a mut self,
@@ -109,6 +122,26 @@ impl TestApi {
             name,
             &[("schema.prisma", schema)],
             migrations_directory,
+            SchemaFilter::default(),
+            "",
+        )
+    }
+
+    pub fn create_migration_with_filter<'a>(
+        &'a mut self,
+        name: &'a str,
+        schema: &'a str,
+        migrations_directory: &'a TempDir,
+        filter: SchemaFilter,
+        init_script: &'a str,
+    ) -> CreateMigration<'a> {
+        CreateMigration::new(
+            &mut self.connector,
+            name,
+            &[("schema.prisma", schema)],
+            migrations_directory,
+            filter,
+            init_script,
         )
     }
 
@@ -118,7 +151,14 @@ impl TestApi {
         files: &[(&'a str, &'a str)],
         migrations_directory: &'a TempDir,
     ) -> CreateMigration<'a> {
-        CreateMigration::new(&mut self.connector, name, files, migrations_directory)
+        CreateMigration::new(
+            &mut self.connector,
+            name,
+            files,
+            migrations_directory,
+            SchemaFilter::default(),
+            "",
+        )
     }
 
     /// Create a temporary directory to serve as a test migrations directory.
@@ -128,7 +168,15 @@ impl TestApi {
 
     /// Builder and assertions to call the `devDiagnostic` command.
     pub fn dev_diagnostic<'a>(&'a mut self, migrations_directory: &'a TempDir) -> DevDiagnostic<'a> {
-        DevDiagnostic::new(&mut self.connector, migrations_directory)
+        DevDiagnostic::new(&mut self.connector, migrations_directory, SchemaFilter::default())
+    }
+
+    pub fn dev_diagnostic_with_filter<'a>(
+        &'a mut self,
+        migrations_directory: &'a TempDir,
+        filter: SchemaFilter,
+    ) -> DevDiagnostic<'a> {
+        DevDiagnostic::new(&mut self.connector, migrations_directory, filter)
     }
 
     pub fn diagnose_migration_history<'a>(
@@ -154,7 +202,26 @@ impl TestApi {
         migrations_directory: &'a TempDir,
         schema: String,
     ) -> EvaluateDataLoss<'a> {
-        EvaluateDataLoss::new(&mut self.connector, migrations_directory, &[("schema.prisma", &schema)])
+        EvaluateDataLoss::new(
+            &mut self.connector,
+            migrations_directory,
+            &[("schema.prisma", &schema)],
+            SchemaFilter::default(),
+        )
+    }
+
+    pub fn evaluate_data_loss_with_filter<'a>(
+        &'a mut self,
+        migrations_directory: &'a TempDir,
+        schema: String,
+        filter: SchemaFilter,
+    ) -> EvaluateDataLoss<'a> {
+        EvaluateDataLoss::new(
+            &mut self.connector,
+            migrations_directory,
+            &[("schema.prisma", &schema)],
+            filter,
+        )
     }
 
     pub fn evaluate_data_loss_multi_file<'a>(
@@ -162,7 +229,12 @@ impl TestApi {
         migrations_directory: &'a TempDir,
         files: &[(&'a str, &'a str)],
     ) -> EvaluateDataLoss<'a> {
-        EvaluateDataLoss::new(&mut self.connector, migrations_directory, files)
+        EvaluateDataLoss::new(
+            &mut self.connector,
+            migrations_directory,
+            files,
+            SchemaFilter::default(),
+        )
     }
 
     pub fn introspect_sql<'a>(&'a mut self, name: &'a str, source: &'a str) -> IntrospectSql<'a> {
@@ -343,10 +415,24 @@ impl TestApi {
         to: DiffTarget<'_>,
         namespaces: Option<Namespaces>,
     ) -> String {
-        let from = tok(self.connector.schema_from_diff_target(from, namespaces.clone())).unwrap();
-        let to = tok(self.connector.schema_from_diff_target(to, namespaces)).unwrap();
+        let default_namespace = self.connector.default_runtime_namespace().map(|s| s.to_string());
+
+        let from = tok(self.connector.schema_from_diff_target(
+            from,
+            namespaces.clone(),
+            default_namespace.as_deref(),
+            &SchemaFilter::default().into(),
+        ))
+        .unwrap();
+        let to = tok(self.connector.schema_from_diff_target(
+            to,
+            namespaces,
+            default_namespace.as_deref(),
+            &SchemaFilter::default().into(),
+        ))
+        .unwrap();
         let dialect = self.connector.schema_dialect();
-        let migration = dialect.diff(from, to);
+        let migration = dialect.diff(from, to, &SchemaFilter::default().into());
         dialect.render_script(&migration, &Default::default()).unwrap()
     }
 
@@ -419,15 +505,29 @@ impl TestApi {
 
     /// Plan a `schemaPush` command
     pub fn schema_push(&mut self, dm: impl Into<String>) -> SchemaPush<'_> {
-        let max_ddl_refresh_delay = self.max_ddl_refresh_delay();
-        let dm: String = dm.into();
-
-        SchemaPush::new(&mut self.connector, &[("schema.prisma", &dm)], max_ddl_refresh_delay)
+        self.schema_push_with_filter(dm, SchemaFilter::default())
     }
 
     pub fn schema_push_multi_file(&mut self, files: &[(&str, &str)]) -> SchemaPush<'_> {
         let max_ddl_refresh_delay = self.max_ddl_refresh_delay();
-        SchemaPush::new(&mut self.connector, files, max_ddl_refresh_delay)
+        SchemaPush::new(
+            &mut self.connector,
+            files,
+            max_ddl_refresh_delay,
+            SchemaFilter::default(),
+        )
+    }
+
+    pub fn schema_push_with_filter(&mut self, dm: impl Into<String>, filter: SchemaFilter) -> SchemaPush<'_> {
+        let max_ddl_refresh_delay = self.max_ddl_refresh_delay();
+        let dm: String = dm.into();
+
+        SchemaPush::new(
+            &mut self.connector,
+            &[("schema.prisma", &dm)],
+            max_ddl_refresh_delay,
+            filter,
+        )
     }
 
     pub fn tags(&self) -> BitFlags<Tags> {

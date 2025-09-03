@@ -1,10 +1,10 @@
 use std::fmt::Display;
 
 use super::*;
-use darling::{ast::NestedMeta, FromMeta, ToTokens};
+use darling::{FromMeta, ToTokens, ast::NestedMeta};
 use proc_macro2::Span;
 use quote::quote;
-use syn::{spanned::Spanned, Ident, Meta, Path};
+use syn::{Ident, Meta, Path, spanned::Spanned};
 
 type ConnectorTag = (String, Option<String>);
 
@@ -26,7 +26,10 @@ pub struct ConnectorTestArgs {
     pub exclude_features: ExcludeFeatures,
 
     #[darling(default)]
-    pub exclude_executors: ExcludeExecutors,
+    pub only_executors: Executors,
+
+    #[darling(default)]
+    pub exclude_executors: Executors,
 
     #[darling(default)]
     pub capabilities: RunOnlyForCapabilities,
@@ -203,18 +206,18 @@ impl darling::FromMeta for ConnectorTags {
 }
 
 #[derive(Debug, Default)]
-pub struct ExcludeExecutors {
+pub struct Executors {
     executors: Vec<String>,
 }
 
-impl AsRef<[String]> for ExcludeExecutors {
+impl AsRef<[String]> for Executors {
     fn as_ref(&self) -> &[String] {
         self.executors.as_ref()
     }
 }
-impl darling::FromMeta for ExcludeExecutors {
+impl darling::FromMeta for Executors {
     fn from_list(items: &[NestedMeta]) -> Result<Self, darling::Error> {
-        let executors = strings_to_list("ExcludeExecutors", items)?;
+        let executors = strings_to_list("Executors", items)?;
         Ok(Self { executors })
     }
 }
@@ -250,7 +253,7 @@ fn tags_from_list(items: &[NestedMeta]) -> Result<Vec<ConnectorTag>, darling::Er
                                             return Err(darling::Error::unexpected_type(
                                                 "Versions can be string, char, int and float.",
                                             )
-                                            .with_span(&x.span()))
+                                            .with_span(&x.span()));
                                         }
                                     };
 
@@ -272,7 +275,7 @@ fn tags_from_list(items: &[NestedMeta]) -> Result<Vec<ConnectorTag>, darling::Er
                 return Err(
                     darling::Error::custom("Expected `only` or `exclude` to be a list of `ConnectorTag`.")
                         .with_span(&x.span()),
-                )
+                );
             }
         }
     }
@@ -315,7 +318,7 @@ impl darling::FromMeta for RunOnlyForCapabilities {
                         Meta::Path(p) => match p.get_ident() {
                             Some(ident) => idents.push(ident.clone()),
                             None => {
-                                return Err(darling::Error::unexpected_type("Invalid identifier").with_span(&p.span()))
+                                return Err(darling::Error::unexpected_type("Invalid identifier").with_span(&p.span()));
                             }
                         },
                         x => return Err(darling::Error::unexpected_type("Expected identifiers").with_span(&x.span())),
@@ -325,7 +328,7 @@ impl darling::FromMeta for RunOnlyForCapabilities {
                     return Err(
                         darling::Error::custom("Expected `only` or `exclude` to be a list of `ConnectorTag`.")
                             .with_span(&x.span()),
-                    )
+                    );
                 }
             }
         }

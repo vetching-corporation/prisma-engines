@@ -1,9 +1,9 @@
 use crate::utils;
 use schema_core::{
+    CoreError, CoreResult,
     commands::apply_migrations,
     json_rpc::types::*,
     schema_connector::{Namespaces, SchemaConnector},
-    CoreError, CoreResult,
 };
 use tempfile::TempDir;
 
@@ -31,7 +31,15 @@ impl<'a> ApplyMigrations<'a> {
 
     pub async fn send(self) -> CoreResult<ApplyMigrationsAssertion<'a>> {
         let migrations_list = utils::list_migrations(self.migrations_directory.path()).unwrap();
-        let output = apply_migrations(ApplyMigrationsInput { migrations_list }, self.api, self.namespaces).await?;
+        let output = apply_migrations(
+            ApplyMigrationsInput {
+                migrations_list,
+                filters: SchemaFilter::default(),
+            },
+            self.api,
+            self.namespaces,
+        )
+        .await?;
 
         Ok(ApplyMigrationsAssertion {
             output,

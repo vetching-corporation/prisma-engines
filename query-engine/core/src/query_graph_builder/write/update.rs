@@ -1,16 +1,16 @@
 use super::*;
-use crate::inputs::{RecordQueryFilterInput, UpdateRecordSelectorsInput};
+use crate::inputs::{RecordQueryFilterInput, UpdateManyRecordsSelectorsInput, UpdateRecordSelectorsInput};
 use crate::query_graph_builder::write::limit::validate_limit;
 use crate::query_graph_builder::write::write_args_parser::*;
 use crate::{
+    ArgumentListLookup, ParsedField, ParsedInputMap,
     query_ast::*,
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    ArgumentListLookup, ParsedField, ParsedInputMap,
 };
 use crate::{DataExpectation, ParsedObject, RowSink};
 use psl::datamodel_connector::ConnectorCapability;
 use query_structure::{Filter, Model};
-use schema::{constants::args, QuerySchema};
+use schema::{QuerySchema, constants::args};
 use std::convert::TryInto;
 
 /// Creates an update record query and adds it to the query graph, together with it's nested queries and companion read query.
@@ -53,7 +53,7 @@ pub(crate) fn update_record(
         graph.create_edge(
             &read_parent_node,
             &update_node,
-            QueryGraphDependency::ProjectedDataSinkDependency(
+            QueryGraphDependency::ProjectedDataDependency(
                 model.shard_aware_primary_identifier(),
                 RowSink::All(&UpdateRecordSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
@@ -75,7 +75,7 @@ pub(crate) fn update_record(
             &check_node,
             QueryGraphDependency::ProjectedDataDependency(
                 model.shard_aware_primary_identifier(),
-                Box::new(move |read_node, _| Ok(read_node)),
+                RowSink::Discard,
                 Some(DataExpectation::non_empty_rows(
                     MissingRecord::builder().operation(DataOperation::Update).build(),
                 )),
@@ -93,7 +93,7 @@ pub(crate) fn update_record(
         graph.create_edge(
             &update_node,
             &read_node,
-            QueryGraphDependency::ProjectedDataSinkDependency(
+            QueryGraphDependency::ProjectedDataDependency(
                 model.shard_aware_primary_identifier(),
                 RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
                 Some(DataExpectation::non_empty_rows(
@@ -168,13 +168,7 @@ pub fn update_many_records(
             &update_many_node,
             QueryGraphDependency::ProjectedDataDependency(
                 model.shard_aware_primary_identifier(),
-                Box::new(move |mut update_node, parent_ids| {
-                    if let Node::Query(Query::Write(WriteQuery::UpdateManyRecords(ref mut ur))) = update_node {
-                        ur.record_filter = parent_ids.into();
-                    }
-
-                    Ok(update_node)
-                }),
+                RowSink::All(&UpdateManyRecordsSelectorsInput),
                 None,
             ),
         )?;

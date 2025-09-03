@@ -24,11 +24,11 @@ dev.db
 /docker.env
 /docker-compose.tests.yml
 
-# buildkite artifacts
-buildkite-script-*
-
 # VSCode specific
 .vscode/
+
+# Zed editor configuration
+.zed/
 
 # Nix specific
 .direnv/

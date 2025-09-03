@@ -1,6 +1,6 @@
 use super::{inmemory_record_processor::InMemoryRecordProcessor, *};
 use crate::{interpreter::InterpretationResult, query_ast::*, result_ast::*};
-use connector::{error::ConnectorError, ConnectionLike};
+use connector::{ConnectionLike, error::ConnectorError};
 use futures::future::{BoxFuture, FutureExt};
 use psl::can_support_relation_load_strategy;
 use query_structure::{ManyRecords, RelationLoadStrategy, RelationSelection};
@@ -111,7 +111,7 @@ fn read_many_by_queries(
     mut query: ManyRecordsQuery,
     traceparent: Option<TraceParent>,
 ) -> BoxFuture<'_, InterpretationResult<QueryResult>> {
-    let processor = if query.args.requires_inmemory_processing() {
+    let processor = if query.args.requires_inmemory_processing(RelationLoadStrategy::Query) {
         Some(InMemoryRecordProcessor::new_from_query_args(&mut query.args))
     } else {
         None

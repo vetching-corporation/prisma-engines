@@ -12,12 +12,12 @@ mod migration_step_applier;
 mod sampler;
 mod schema_calculator;
 
-use client_wrapper::{mongo_error_to_connector_error, Client};
+use client_wrapper::{Client, mongo_error_to_connector_error};
 use enumflags2::BitFlags;
 use migration::MongoDbMigration;
 use mongodb_schema_describer::MongoSchema;
 use psl::PreviewFeature;
-use schema_connector::{migrations_directory::MigrationDirectory, *};
+use schema_connector::{migrations_directory::Migrations, *};
 use std::{future, sync::Arc};
 use tokio::sync::OnceCell;
 
@@ -54,7 +54,7 @@ impl MongoDbSchemaConnector {
 }
 
 impl SchemaDialect for MongoDbSchemaDialect {
-    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema) -> Migration {
+    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema, _filter: &SchemaFilter) -> Migration {
         let from: Box<MongoSchema> = from.downcast();
         let to: Box<MongoSchema> = to.downcast();
         Migration::new(differ::diff(from, to))
@@ -90,15 +90,24 @@ impl SchemaDialect for MongoDbSchemaDialect {
         DatabaseSchema::new(MongoSchema::default())
     }
 
-    fn schema_from_datamodel(&self, sources: Vec<(String, psl::SourceFile)>) -> ConnectorResult<DatabaseSchema> {
+    fn default_namespace(&self) -> Option<&str> {
+        None
+    }
+
+    fn schema_from_datamodel(
+        &self,
+        sources: Vec<(String, psl::SourceFile)>,
+        _default_namespace: Option<&str>,
+    ) -> ConnectorResult<DatabaseSchema> {
         let validated_schema = psl::parse_schema_multi(&sources).map_err(ConnectorError::new_schema_parser_error)?;
         Ok(DatabaseSchema::new(schema_calculator::calculate(&validated_schema)))
     }
 
     fn validate_migrations_with_target<'a>(
         &'a mut self,
-        _migrations: &'a [MigrationDirectory],
+        _migrations: &'a Migrations,
         _namespaces: Option<Namespaces>,
+        _filter: &SchemaFilter,
         _target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<()>> {
         Box::pin(future::ready(Ok(())))
@@ -106,8 +115,9 @@ impl SchemaDialect for MongoDbSchemaDialect {
 
     fn schema_from_migrations_with_target<'a>(
         &'a self,
-        _migrations: &'a [MigrationDirectory],
+        _migrations: &'a Migrations,
         _namespaces: Option<Namespaces>,
+        _filter: &SchemaFilter,
         _target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>> {
         Box::pin(async { Err(unsupported_command_error()) })
@@ -119,6 +129,10 @@ impl SchemaConnector for MongoDbSchemaConnector {
         Box::new(MongoDbSchemaDialect)
     }
 
+    fn default_runtime_namespace(&self) -> Option<&str> {
+        None
+    }
+
     fn host(&self) -> &Arc<dyn ConnectorHost> {
         &self.host
     }
@@ -127,7 +141,7 @@ impl SchemaConnector for MongoDbSchemaConnector {
         Box::pin(self.apply_migration_impl(migration))
     }
 
-    fn apply_script(&mut self, _migration_name: &str, _script: &str) -> BoxFuture<ConnectorResult<()>> {
+    fn apply_script(&mut self, _migration_name: &str, _script: &str) -> BoxFuture<'_, ConnectorResult<()>> {
         Box::pin(future::ready(Err(crate::unsupported_command_error())))
     }
 
@@ -161,11 +175,12 @@ impl SchemaConnector for MongoDbSchemaConnector {
         Box::pin(async { self.client().await?.drop_database().await })
     }
 
-    fn reset(
-        &mut self,
+    fn reset<'a>(
+        &'a mut self,
         _soft: bool,
         _namespaces: Option<Namespaces>,
-    ) -> BoxFuture<'_, schema_connector::ConnectorResult<()>> {
+        _filter: &'a SchemaFilter,
+    ) -> BoxFuture<'a, schema_connector::ConnectorResult<()>> {
         Box::pin(async { self.client().await?.drop_database().await })
     }
 
@@ -205,8 +220,9 @@ impl SchemaConnector for MongoDbSchemaConnector {
 
     fn validate_migrations<'a>(
         &'a mut self,
-        _migrations: &'a [MigrationDirectory],
+        _migrations: &'a Migrations,
         _namespaces: Option<Namespaces>,
+        _filter: &SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<()>> {
         Box::pin(future::ready(Ok(())))
     }
@@ -227,8 +243,9 @@ impl SchemaConnector for MongoDbSchemaConnector {
 
     fn schema_from_migrations<'a>(
         &'a mut self,
-        _migrations: &'a [MigrationDirectory],
+        _migrations: &'a Migrations,
         _namespaces: Option<Namespaces>,
+        _filter: &SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>> {
         Box::pin(async { Err(unsupported_command_error()) })
     }

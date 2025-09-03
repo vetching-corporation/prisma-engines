@@ -2,8 +2,8 @@
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use crate::{
-    getters::Getter, ids::*, parsers::Parser, Column, ColumnArity, ColumnType, ColumnTypeFamily, DefaultValue,
-    DescriberResult, ForeignKeyAction, PrismaValue, Regex, SQLSortOrder, SqlSchema,
+    Column, ColumnArity, ColumnType, ColumnTypeFamily, DefaultValue, DescriberResult, ForeignKeyAction, PrismaValue,
+    Regex, SQLSortOrder, SqlSchema, getters::Getter, ids::*, parsers::Parser,
 };
 use either::Either;
 use indexmap::IndexMap;
@@ -378,27 +378,27 @@ async fn push_columns(
         }
     }
 
-    if let Either::Left(table_id) = container_id {
-        if !pk_cols.is_empty() {
-            let pk_id = schema.push_primary_key(table_id, String::new());
-            for column_id in pk_cols.values() {
-                schema.push_index_column(crate::IndexColumn {
-                    index_id: pk_id,
-                    column_id: *column_id,
-                    sort_order: None,
-                    length: None,
-                });
-            }
+    if let Either::Left(table_id) = container_id
+        && !pk_cols.is_empty()
+    {
+        let pk_id = schema.push_primary_key(table_id, String::new());
+        for column_id in pk_cols.values() {
+            schema.push_index_column(crate::IndexColumn {
+                index_id: pk_id,
+                column_id: *column_id,
+                sort_order: None,
+                length: None,
+            });
+        }
 
-            // Integer ID columns are always implemented with either row id or autoincrement
-            if pk_cols.len() == 1 {
-                let pk_col_id = *pk_cols.values().next().unwrap();
-                let pk_col = &mut schema.table_columns[pk_col_id.0 as usize];
-                // See https://www.sqlite.org/lang_createtable.html for the exact logic.
-                if pk_col.1.tpe.full_data_type.eq_ignore_ascii_case("INTEGER") {
-                    pk_col.1.auto_increment = true;
-                    pk_col.1.tpe.arity = ColumnArity::Required;
-                }
+        // Integer ID columns are always implemented with either row id or autoincrement
+        if pk_cols.len() == 1 {
+            let pk_col_id = *pk_cols.values().next().unwrap();
+            let pk_col = &mut schema.table_columns[pk_col_id.0 as usize];
+            // See https://www.sqlite.org/lang_createtable.html for the exact logic.
+            if pk_col.1.tpe.full_data_type.eq_ignore_ascii_case("INTEGER") {
+                pk_col.1.auto_increment = true;
+                pk_col.1.tpe.arity = ColumnArity::Required;
             }
         }
     }

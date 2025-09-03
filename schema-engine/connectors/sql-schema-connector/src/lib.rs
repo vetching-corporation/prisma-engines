@@ -21,9 +21,9 @@ use database_schema::SqlDatabaseSchema;
 use enumflags2::BitFlags;
 use flavour::{SqlConnector, SqlDialect, UsingExternalShadowDb};
 use migration_pair::MigrationPair;
-use psl::{datamodel_connector::NativeTypeInstance, parser_database::ScalarType, SourceFile, ValidatedSchema};
+use psl::{SourceFile, ValidatedSchema, datamodel_connector::NativeTypeInstance, parser_database::ScalarType};
 use quaint::connector::DescribedQuery;
-use schema_connector::{migrations_directory::MigrationDirectory, *};
+use schema_connector::{migrations_directory::Migrations, *};
 use sql_doc_parser::{parse_sql_doc, sanitize_sql};
 use sql_migration::{DropUserDefinedType, DropView, SqlMigration, SqlMigrationStep};
 use sql_schema_describer as sql;
@@ -74,11 +74,14 @@ impl SqlSchemaDialect {
 
 impl SchemaDialect for SqlSchemaDialect {
     #[tracing::instrument(skip(self, from, to))]
-    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema) -> Migration {
+    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema, filter: &SchemaFilter) -> Migration {
         let previous = SqlDatabaseSchema::from_erased(from);
         let next = SqlDatabaseSchema::from_erased(to);
-        let steps =
-            sql_schema_differ::calculate_steps(MigrationPair::new(&previous, &next), &*self.dialect.schema_differ());
+        let steps = sql_schema_differ::calculate_steps(
+            MigrationPair::new(&previous, &next),
+            &*self.dialect.schema_differ(),
+            filter,
+        );
         tracing::debug!(?steps, "Inferred migration steps.");
 
         Migration::new(SqlMigration {
@@ -90,6 +93,10 @@ impl SchemaDialect for SqlSchemaDialect {
 
     fn empty_database_schema(&self) -> DatabaseSchema {
         DatabaseSchema::new(SqlDatabaseSchema::from(self.dialect.empty_database_schema()))
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        self.dialect.default_namespace()
     }
 
     fn migration_file_extension(&self) -> &'static str {
@@ -123,22 +130,27 @@ impl SchemaDialect for SqlSchemaDialect {
         )
     }
 
-    fn schema_from_datamodel(&self, sources: Vec<(String, SourceFile)>) -> ConnectorResult<DatabaseSchema> {
+    fn schema_from_datamodel(
+        &self,
+        sources: Vec<(String, SourceFile)>,
+        default_namespace: Option<&str>,
+    ) -> ConnectorResult<DatabaseSchema> {
         let schema = psl::parse_schema_multi(&sources).map_err(ConnectorError::new_schema_parser_error)?;
         self.dialect.check_schema_features(&schema)?;
         let calculator = self.dialect.schema_calculator();
-        Ok(sql_schema_calculator::calculate_sql_schema(&schema, &*calculator).into())
+        Ok(sql_schema_calculator::calculate_sql_schema(&schema, default_namespace, &*calculator).into())
     }
 
     #[tracing::instrument(skip(self, migrations, target))]
     fn validate_migrations_with_target<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<()>> {
         Box::pin(async move {
-            self.schema_from_migrations_with_target(migrations, namespaces, target)
+            self.schema_from_migrations_with_target(migrations, namespaces, filter, target)
                 .await?;
             Ok(())
         })
@@ -146,8 +158,9 @@ impl SchemaDialect for SqlSchemaDialect {
 
     fn schema_from_migrations_with_target<'a>(
         &'a self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>> {
         Box::pin(async move {
@@ -176,11 +189,11 @@ impl SchemaDialect for SqlSchemaDialect {
                 _ => {
                     return Err(ConnectorError::from_msg(
                         "Received an unsupported shadow database target".to_owned(),
-                    ))
+                    ));
                 }
             };
             let schema = connector
-                .sql_schema_from_migration_history(migrations, namespaces, UsingExternalShadowDb::Yes)
+                .sql_schema_from_migration_history(migrations, namespaces, filter, UsingExternalShadowDb::Yes)
                 .await;
             // dispose of the connector regardless of the result
             connector.dispose().await?;
@@ -343,6 +356,10 @@ impl SchemaConnector for SqlSchemaConnector {
         Box::new(SqlSchemaDialect::new(self.inner.dialect()))
     }
 
+    fn default_runtime_namespace(&self) -> Option<&str> {
+        self.inner.default_namespace()
+    }
+
     // TODO: this only seems to be used in `sql-migration-tests`.
     fn set_host(&mut self, host: Arc<dyn schema_connector::ConnectorHost>) {
         self.host = host;
@@ -418,8 +435,9 @@ impl SchemaConnector for SqlSchemaConnector {
 
     fn schema_from_migrations<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>> {
         Box::pin(async move {
             match self.inner.shadow_db_url() {
@@ -429,12 +447,12 @@ impl SchemaConnector for SqlSchemaConnector {
                         preview_features: self.inner.preview_features(),
                     };
                     self.schema_dialect()
-                        .schema_from_migrations_with_target(migrations, namespaces, target)
+                        .schema_from_migrations_with_target(migrations, namespaces, filter, target)
                         .await
                 }
                 None => self
                     .inner
-                    .sql_schema_from_migration_history(migrations, namespaces, UsingExternalShadowDb::No)
+                    .sql_schema_from_migration_history(migrations, namespaces, filter, UsingExternalShadowDb::No)
                     .await
                     .map(SqlDatabaseSchema::from)
                     .map(DatabaseSchema::new),
@@ -470,10 +488,15 @@ impl SchemaConnector for SqlSchemaConnector {
         })
     }
 
-    fn reset(&mut self, soft: bool, namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<()>> {
+    fn reset<'a>(
+        &'a mut self,
+        soft: bool,
+        namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
+    ) -> BoxFuture<'a, ConnectorResult<()>> {
         Box::pin(async move {
             if soft || self.inner.reset(namespaces.clone()).await.is_err() {
-                best_effort_reset(self.inner.as_mut(), namespaces).await?;
+                best_effort_reset(self.inner.as_mut(), namespaces, filter).await?;
             }
 
             Ok(())
@@ -500,11 +523,12 @@ impl SchemaConnector for SqlSchemaConnector {
     #[tracing::instrument(skip(self, migrations))]
     fn validate_migrations<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<()>> {
         Box::pin(async move {
-            self.schema_from_migrations(migrations, namespaces).await?;
+            self.schema_from_migrations(migrations, namespaces, filter).await?;
             Ok(())
         })
     }
@@ -573,8 +597,9 @@ fn new_shadow_database_name() -> String {
 async fn best_effort_reset(
     connector: &mut (dyn SqlConnector + Send + Sync),
     namespaces: Option<Namespaces>,
+    filter: &SchemaFilter,
 ) -> ConnectorResult<()> {
-    best_effort_reset_impl(connector, namespaces)
+    best_effort_reset_impl(connector, namespaces, filter)
         .await
         .map_err(|err| err.into_soft_reset_failed_error())
 }
@@ -582,6 +607,7 @@ async fn best_effort_reset(
 async fn best_effort_reset_impl(
     connector: &mut (dyn SqlConnector + Send + Sync),
     namespaces: Option<Namespaces>,
+    filter: &SchemaFilter,
 ) -> ConnectorResult<()> {
     tracing::info!("Attempting best_effort_reset");
 
@@ -604,6 +630,7 @@ async fn best_effort_reset_impl(
     steps.extend(sql_schema_differ::calculate_steps(
         diffables.as_ref(),
         &*dialect.schema_differ(),
+        filter,
     ));
     let (source_schema, target_schema) = diffables.map(|s| s.describer_schema).into_tuple();
 

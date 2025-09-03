@@ -4,15 +4,15 @@ use psl::{PreviewFeatures, SourceFile, ValidatedSchema};
 use quaint::connector::ExternalConnectorFactory;
 
 use crate::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorHost, ConnectorResult, DatabaseSchema,
-    DestructiveChangeChecker, DestructiveChangeDiagnostics, DiffTarget, IntrospectSqlQueryInput,
-    IntrospectSqlQueryOutput, IntrospectionContext, IntrospectionResult, Migration, MigrationPersistence, Namespaces,
+    BoxFuture, ConnectorHost, ConnectorResult, DatabaseSchema, DestructiveChangeChecker, DestructiveChangeDiagnostics,
+    DiffTarget, IntrospectSqlQueryInput, IntrospectSqlQueryOutput, IntrospectionContext, IntrospectionResult,
+    Migration, MigrationPersistence, Namespaces, SchemaFilter, migrations_directory::Migrations,
 };
 
 /// The dialect for schema operations on a particular database.
 pub trait SchemaDialect: Send + Sync + 'static {
     /// Create a migration by comparing two database schemas.
-    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema) -> Migration;
+    fn diff(&self, from: DatabaseSchema, to: DatabaseSchema, filter: &SchemaFilter) -> Migration;
 
     /// Render the migration to a runnable script.
     ///
@@ -45,14 +45,25 @@ pub trait SchemaDialect: Send + Sync + 'static {
     /// An empty database schema (for diffing).
     fn empty_database_schema(&self) -> DatabaseSchema;
 
+    /// The default namespace for the dialect if it supports multiple namespaces.
+    fn default_namespace(&self) -> Option<&str>;
+
     /// Create a database schema from datamodel source files.
-    fn schema_from_datamodel(&self, sources: Vec<(String, SourceFile)>) -> ConnectorResult<DatabaseSchema>;
+    ///
+    /// Note: The `default_namespace` should be taken from the connector's runtime
+    /// configuration, which might be different from the dialect's default!
+    fn schema_from_datamodel(
+        &self,
+        sources: Vec<(String, SourceFile)>,
+        default_namespace: Option<&str>,
+    ) -> ConnectorResult<DatabaseSchema>;
 
     /// If possible, check that the passed in migrations apply cleanly.
     fn validate_migrations_with_target<'a>(
         &'a mut self,
-        _migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<()>>;
 
@@ -61,8 +72,9 @@ pub trait SchemaDialect: Send + Sync + 'static {
     /// prisma schema, because that information is otherwise unavailable.
     fn schema_from_migrations_with_target<'a>(
         &'a self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         target: ExternalShadowDatabase,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>>;
 }
@@ -72,6 +84,10 @@ pub trait SchemaDialect: Send + Sync + 'static {
 pub trait SchemaConnector: Send + Sync + 'static {
     /// Return the schema dialect of the connector.
     fn schema_dialect(&self) -> Box<dyn SchemaDialect>;
+
+    /// The default namespaces for the connector if it supports multiple namespaces.
+    /// Should be derived from the connectors runtime configuration but can fallback to the dialect's default.
+    fn default_runtime_namespace(&self) -> Option<&str>;
 
     /// Accept a new ConnectorHost.
     fn set_host(&mut self, host: Arc<dyn ConnectorHost>);
@@ -119,7 +135,12 @@ pub trait SchemaConnector: Send + Sync + 'static {
     ///
     /// Set the `soft` parameter to `true` to force a soft-reset, that is to say a reset that does
     /// not drop the database.
-    fn reset(&mut self, soft: bool, namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<()>>;
+    fn reset<'a>(
+        &'a mut self,
+        soft: bool,
+        namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
+    ) -> BoxFuture<'a, ConnectorResult<()>>;
 
     /// Optionally check that the features implied by the provided datamodel are all compatible with
     /// the specific database version being used.
@@ -146,8 +167,9 @@ pub trait SchemaConnector: Send + Sync + 'static {
     /// connector.
     fn schema_from_migrations<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>>;
 
     /// In-tro-spec-shon.
@@ -165,8 +187,9 @@ pub trait SchemaConnector: Send + Sync + 'static {
     /// If possible, check that the passed in migrations apply cleanly.
     fn validate_migrations<'a>(
         &'a mut self,
-        _migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<()>>;
 
     /// Read a schema for diffing.
@@ -174,11 +197,15 @@ pub trait SchemaConnector: Send + Sync + 'static {
         &'a mut self,
         diff_target: DiffTarget<'a>,
         namespaces: Option<Namespaces>,
+        default_namespace: Option<&'a str>,
+        filter: &'a SchemaFilter,
     ) -> BoxFuture<'a, ConnectorResult<DatabaseSchema>> {
         Box::pin(async move {
             match diff_target {
-                DiffTarget::Datamodel(sources) => self.schema_dialect().schema_from_datamodel(sources),
-                DiffTarget::Migrations(migrations) => self.schema_from_migrations(migrations, namespaces).await,
+                DiffTarget::Datamodel(sources) => {
+                    self.schema_dialect().schema_from_datamodel(sources, default_namespace)
+                }
+                DiffTarget::Migrations(migrations) => self.schema_from_migrations(migrations, namespaces, filter).await,
                 DiffTarget::Database => self.schema_from_database(namespaces).await,
                 DiffTarget::Empty => Ok(self.schema_dialect().empty_database_schema()),
             }

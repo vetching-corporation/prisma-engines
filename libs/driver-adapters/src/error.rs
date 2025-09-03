@@ -49,10 +49,19 @@ pub struct MssqlErrorDef {
     pub message: String,
 }
 
+/// Wrapper for JS-side errors
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DriverAdapterError {
+    pub original_message: Option<String>,
+    pub original_code: Option<String>,
+    #[serde(flatten)]
+    pub mapped: MappedDriverAdapterError,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind")]
-/// Wrapper for JS-side errors
-pub(crate) enum DriverAdapterError {
+pub(crate) enum MappedDriverAdapterError {
     /// Unexpected JS exception
     GenericJs {
         id: i32,
@@ -76,6 +85,10 @@ pub(crate) enum DriverAdapterError {
     ForeignKeyConstraintViolation {
         constraint: Option<DriverAdapterConstraint>,
     },
+    DatabaseNotReachable {
+        host: Option<String>,
+        port: Option<u16>,
+    },
     DatabaseDoesNotExist {
         db: Option<String>,
     },
@@ -84,6 +97,10 @@ pub(crate) enum DriverAdapterError {
     },
     DatabaseAccessDenied {
         db: Option<String>,
+    },
+    ConnectionClosed,
+    TlsConnectionError {
+        reason: String,
     },
     AuthenticationFailed {
         user: Option<String>,

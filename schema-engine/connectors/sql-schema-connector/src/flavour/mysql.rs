@@ -6,17 +6,18 @@ mod schema_differ;
 
 use super::{SqlDialect, UsingExternalShadowDb};
 use crate::{error::SystemDatabase, flavour::SqlConnector};
-use connector::{shadow_db, Connection};
+use connector::{Connection, shadow_db};
 use destructive_change_checker::MysqlDestructiveChangeCheckerFlavour;
 use enumflags2::BitFlags;
 use indoc::indoc;
-use psl::{datamodel_connector, parser_database::ScalarType, ValidatedSchema};
+use psl::{ValidatedSchema, datamodel_connector, parser_database::ScalarType};
 use quaint::connector::MysqlUrl;
 use regex::{Regex, RegexSet};
 use renderer::MysqlRenderer;
 use schema_calculator::MysqlSchemaCalculatorFlavour;
 use schema_connector::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorError, ConnectorParams, ConnectorResult, Namespaces,
+    BoxFuture, ConnectorError, ConnectorParams, ConnectorResult, Namespaces, SchemaFilter,
+    migrations_directory::Migrations,
 };
 use schema_differ::MysqlSchemaDifferFlavour;
 use sql_schema_describer::SqlSchema;
@@ -184,7 +185,11 @@ impl SqlConnector for MysqlConnector {
         })
     }
 
-    fn table_names(&mut self, _namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
+    fn table_names(
+        &mut self,
+        _namespaces: Option<Namespaces>,
+        filters: SchemaFilter,
+    ) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
         Box::pin(async move {
             let select = r#"
                 SELECT DISTINCT BINARY table_info.table_name AS table_name
@@ -211,6 +216,12 @@ impl SqlConnector for MysqlConnector {
             let table_names: Vec<String> = rows
                 .into_iter()
                 .flat_map(|row| row.get("table_name").and_then(|s| s.to_string()))
+                .filter(|table_name| {
+                    !self
+                        .dialect()
+                        .schema_differ()
+                        .contains_table(&filters.external_tables, None, table_name)
+                })
                 .collect();
 
             Ok(table_names)
@@ -366,8 +377,9 @@ impl SqlConnector for MysqlConnector {
     #[tracing::instrument(skip(self, migrations))]
     fn sql_schema_from_migration_history<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         external_shadow_db: UsingExternalShadowDb,
     ) -> BoxFuture<'a, ConnectorResult<SqlSchema>> {
         match external_shadow_db {
@@ -376,7 +388,7 @@ impl SqlConnector for MysqlConnector {
                 tracing::info!("Connected to an external shadow database.");
 
                 if self.reset(None).await.is_err() {
-                    crate::best_effort_reset(self, namespaces).await?;
+                    crate::best_effort_reset(self, namespaces, filter).await?;
                 }
 
                 shadow_db::sql_schema_from_migrations_history(migrations, self).await
@@ -444,6 +456,10 @@ impl SqlConnector for MysqlConnector {
 
     fn search_path(&self) -> &str {
         self.database_name()
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        None // For MySQL we do not support multiple namespaces
     }
 
     fn describe_query<'a>(

@@ -1,6 +1,6 @@
 use super::*;
 use fmt::Debug;
-use query_structure::{prelude::ParentContainer, DefaultKind};
+use query_structure::{DefaultKind, prelude::ParentContainer};
 use std::{borrow::Cow, boxed::Box, fmt, sync::LazyLock};
 
 type InputObjectFields<'a> =
@@ -126,6 +126,7 @@ pub struct InputField<'a> {
 
     field_types: Vec<InputType<'a>>,
     is_required: bool,
+    requires_other_fields: Vec<Cow<'a, str>>,
 }
 
 impl<'a> InputField<'a> {
@@ -140,6 +141,7 @@ impl<'a> InputField<'a> {
             default_value,
             field_types,
             is_required,
+            requires_other_fields: Vec::new(),
         }
     }
 
@@ -151,6 +153,22 @@ impl<'a> InputField<'a> {
     /// is required, but doesn't state whether or not the input can be null.
     pub fn is_required(&self) -> bool {
         self.is_required
+    }
+
+    /// Returns other fields that must be present on the input object when this
+    /// field is present.
+    pub fn requires_other_fields(&self) -> &[Cow<'a, str>] {
+        &self.requires_other_fields
+    }
+
+    /// Sets the required fields that must be present on the input object when this
+    /// field is present.
+    pub fn with_requires_other_fields(
+        mut self,
+        requires_fields: impl IntoIterator<Item = impl Into<Cow<'a, str>>>,
+    ) -> Self {
+        self.requires_other_fields = requires_fields.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Sets the field as optional (not required to be present on the input).
@@ -167,11 +185,7 @@ impl<'a> InputField<'a> {
 
     /// Sets the field as optional if the condition is true.
     pub(crate) fn optional_if(self, condition: bool) -> Self {
-        if condition {
-            self.optional()
-        } else {
-            self
-        }
+        if condition { self.optional() } else { self }
     }
 
     /// Sets the field as nullable (accepting null inputs).
@@ -188,11 +202,7 @@ impl<'a> InputField<'a> {
 
     /// Sets the field as nullable if the condition is true.
     pub(crate) fn nullable_if(self, condition: bool) -> Self {
-        if condition {
-            self.nullable()
-        } else {
-            self
-        }
+        if condition { self.nullable() } else { self }
     }
 }
 
@@ -296,19 +306,11 @@ impl<'a> InputType<'a> {
     }
 
     pub fn as_object(&self) -> Option<&InputObjectType<'a>> {
-        if let Self::Object(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Object(v) = self { Some(v) } else { None }
     }
 
     pub fn as_list(&self) -> Option<&InputType<'a>> {
-        if let Self::List(list) = self {
-            Some(list)
-        } else {
-            None
-        }
+        if let Self::List(list) = self { Some(list) } else { None }
     }
 
     pub fn into_object(self) -> Option<InputObjectType<'a>> {

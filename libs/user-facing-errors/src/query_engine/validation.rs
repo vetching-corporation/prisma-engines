@@ -48,7 +48,8 @@ pub enum ValidationErrorKind {
     TooManyFieldsGiven,
     /// See [`ValidationError::selection_set_on_scalar`]
     SelectionSetOnScalar,
-    /// See [`ValidationError::required_argument_missing`]
+    /// See [`ValidationError::required_argument_missing`] and
+    /// [`ValidationError::conditionally_required_argument_missing`]
     RequiredArgumentMissing,
     /// See [`ValidationError::union`]
     Union,
@@ -298,6 +299,49 @@ impl ValidationError {
         }
     }
 
+    /// Creates a [`ValidationErrorKind::RequiredArgumentMissing`] kind of error
+    /// for a conditionally required argument which needs to be present in the
+    /// current query because another argument which depends on it was provided.
+    ///
+    /// Example json query (`take` requires `orderBy` in views):
+    ///
+    /// ```json
+    /// {
+    ///     "action": "findMany",
+    ///     "modelName": "UserView",
+    ///     "query": {
+    ///         "arguments": {
+    ///             "take": "1"
+    ///         },
+    ///         "selection": {
+    ///             "$scalars": true
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn conditionally_required_argument_missing(
+        selection_path: &[&str],
+        argument_path: &[&str],
+        dependent_argument_path: &[&str],
+        input_type_descriptions: &[InputTypeDescription],
+    ) -> Self {
+        let message = format!(
+            "`{}`: A value is required but not set. It is required because `{}` was provided.",
+            argument_path.join("."),
+            dependent_argument_path.join(".")
+        );
+        ValidationError {
+            kind: ValidationErrorKind::RequiredArgumentMissing,
+            message,
+            meta: Some(json!({
+                "inputTypes": input_type_descriptions,
+                "argumentPath": argument_path,
+                "dependentArgumentPath": dependent_argument_path,
+                "selectionPath": selection_path,
+            })),
+        }
+    }
+
     /// Creates an [`ValidationErrorKind::UnknownArgument`] kind of error, which happens when the
     /// arguments for a query are not congruent with those expressed in the schema
     ///
@@ -481,6 +525,8 @@ impl ValidationError {
     }
 }
 
+impl std::error::Error for ValidationError {}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputTypeDescription {
@@ -512,7 +558,7 @@ impl OutputTypeDescriptionField {
     }
 }
 #[derive(Debug, Serialize, Clone)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum InputTypeDescription {
     Object {
         name: String,

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
+    SchemaContainerExt,
     core_error::CoreResult,
     json_rpc::types::{DiffParams, DiffResult, DiffTarget, UrlContainer},
-    SchemaContainerExt,
 };
 use enumflags2::BitFlags;
-use json_rpc::types::MigrationList;
 use schema_connector::{
     ConnectorError, ConnectorHost, DatabaseSchema, ExternalShadowDatabase, Namespaces, SchemaConnector, SchemaDialect,
+    SchemaFilter, migrations_directory::Migrations,
 };
 use sql_schema_connector::SqlSchemaConnector;
 
@@ -21,10 +21,13 @@ pub async fn diff_cli(params: DiffParams, host: Arc<dyn ConnectorHost>) -> CoreR
     let (namespaces, preview_features) =
         namespaces_and_preview_features_from_diff_targets(&[&params.from, &params.to])?;
 
+    let filter: SchemaFilter = params.filters.into();
+
     let from = json_rpc_diff_target_to_dialect(
         &params.from,
         params.shadow_database_url.as_deref(),
         namespaces.clone(),
+        &filter,
         preview_features,
     )
     .await?;
@@ -32,6 +35,7 @@ pub async fn diff_cli(params: DiffParams, host: Arc<dyn ConnectorHost>) -> CoreR
         &params.to,
         params.shadow_database_url.as_deref(),
         namespaces,
+        &filter,
         preview_features,
     )
     .await?;
@@ -54,11 +58,11 @@ pub async fn diff_cli(params: DiffParams, host: Arc<dyn ConnectorHost>) -> CoreR
         (None, None) => {
             return Err(ConnectorError::from_msg(
                 "Could not determine the connector to use for diffing.".to_owned(),
-            ))
+            ));
         }
     };
 
-    let migration = dialect.diff(from, to);
+    let migration = dialect.diff(from, to, &filter);
 
     let mut stdout = if params.script {
         dialect.render_script(&migration, &Default::default())?
@@ -117,6 +121,7 @@ async fn json_rpc_diff_target_to_dialect(
     target: &DiffTarget,
     shadow_database_url: Option<&str>, // TODO: delete the parameter
     namespaces: Option<Namespaces>,
+    filter: &SchemaFilter,
     preview_features: BitFlags<psl::PreviewFeature>,
 ) -> CoreResult<Option<(Box<dyn SchemaDialect>, DatabaseSchema)>> {
     match target {
@@ -131,13 +136,31 @@ async fn json_rpc_diff_target_to_dialect(
             let mut connector = crate::schema_to_connector(&sources, Some(config_dir))?;
             connector.ensure_connection_validity().await?;
             connector.set_preview_features(preview_features);
+            filter.validate(&*connector.schema_dialect())?;
+
             let schema = connector.schema_from_database(namespaces).await?;
             Ok(Some((connector.schema_dialect(), schema)))
         }
         DiffTarget::SchemaDatamodel(schemas) => {
             let sources = schemas.to_psl_input();
-            let dialect = crate::schema_to_dialect(&sources)?;
-            let schema = dialect.schema_from_datamodel(sources)?;
+
+            // Connector only needed to infer the default namespace.
+            // If connector cannot be created (e.g. due to invalid or missing URL) we use the dialect's default namespace.
+            let (default_namespace, dialect) = match crate::schema_to_connector(&sources, None) {
+                Ok(connector) => (
+                    connector.default_runtime_namespace().map(|ns| ns.to_string()),
+                    connector.schema_dialect(),
+                ),
+                Err(_) => {
+                    let dialect = crate::schema_to_dialect(&sources)?;
+                    (dialect.default_namespace().map(|ns| ns.to_string()), dialect)
+                }
+            };
+
+            filter.validate(&*dialect)?;
+
+            let schema = dialect.schema_from_datamodel(sources, default_namespace.as_deref())?;
+
             Ok(Some((dialect, schema)))
         }
         DiffTarget::Url(UrlContainer { url }) => {
@@ -149,27 +172,27 @@ async fn json_rpc_diff_target_to_dialect(
 
             let schema = connector.schema_from_database(namespaces).await?;
             let dialect = connector.schema_dialect();
+            filter.validate(&*dialect)?;
 
             connector.dispose().await?;
 
             Ok(Some((dialect, schema)))
         }
-        DiffTarget::Migrations(MigrationList {
-            lockfile,
-            migration_directories,
-            ..
-        }) => {
-            let provider = schema_connector::migrations_directory::read_provider_from_lock_file(lockfile);
+        DiffTarget::Migrations(migration_list) => {
+            let provider =
+                schema_connector::migrations_directory::read_provider_from_lock_file(&migration_list.lockfile);
             match (provider.as_deref(), shadow_database_url) {
                 (Some(provider), Some(shadow_database_url)) => {
                     let dialect = ::commands::dialect_for_provider(provider)?;
-                    let directories =
-                        schema_connector::migrations_directory::list_migrations(migration_directories.clone());
+                    let migrations = Migrations::from_migration_list(migration_list);
+
+                    filter.validate(&*dialect)?;
 
                     let schema = dialect
                         .schema_from_migrations_with_target(
-                            &directories,
+                            &migrations,
                             namespaces,
+                            filter,
                             ExternalShadowDatabase::ConnectionString {
                                 connection_string: shadow_database_url.to_owned(),
                                 preview_features,
@@ -181,9 +204,12 @@ async fn json_rpc_diff_target_to_dialect(
                 (Some("sqlite"), None) => {
                     // TODO: we don't need this branch
                     let mut connector = SqlSchemaConnector::new_sqlite_inmem(preview_features)?;
-                    let directories =
-                        schema_connector::migrations_directory::list_migrations(migration_directories.clone());
-                    let schema = connector.schema_from_migrations(&directories, namespaces).await?;
+                    let migrations = Migrations::from_migration_list(migration_list);
+                    filter.validate(&*connector.schema_dialect())?;
+
+                    let schema = connector
+                        .schema_from_migrations(&migrations, namespaces, filter)
+                        .await?;
                     Ok(Some((connector.schema_dialect(), schema)))
                 }
                 (Some(_), None) => Err(ConnectorError::from_msg(

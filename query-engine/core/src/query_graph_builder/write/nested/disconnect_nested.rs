@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
+    ParsedInputMap, ParsedInputValue, RowSink,
     inputs::UpdateManyRecordsSelectorsInput,
     query_graph::{NodeRef, QueryGraph, QueryGraphDependency},
-    ParsedInputMap, ParsedInputValue, RowSink,
 };
 use itertools::Itertools;
 use query_structure::{Filter, Model, PrismaValue, RelationCompare, RelationFieldRef, SelectionResult, WriteArgs};
@@ -202,7 +202,7 @@ fn handle_one_to_x(
     graph.create_edge(
         node_to_attach,
         &update_node,
-        QueryGraphDependency::ProjectedDataSinkDependency(
+        QueryGraphDependency::ProjectedDataDependency(
             extractor_model_id,
             RowSink::All(&UpdateManyRecordsSelectorsInput),
             None,

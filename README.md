@@ -19,28 +19,29 @@ and test them.
 
 This repository contains four engines:
 
-- *Query engine*, used by the client to run database queries from Prisma Client
-- *Query compiler*, an actively developed replacement for the query engine, used
+- _Query engine_, used by the client to run database queries from Prisma Client
+- _Query compiler_, an actively developed replacement for the query engine, used
   to compile Prisma Client queries into query plans containing SQL statements
   and other operations, which the client can use to execute Prisma queries
   entirely in JS land
-- *Schema engine*, used to create and run migrations and introspection
-- *Prisma Format*, historically used to format prisma files (hence the name),
+- _Schema engine_, used to create and run migrations and introspection
+- _Prisma Format_, historically used to format prisma files (hence the name),
   now powers other LSP functionality as well
 
-Additionally, the *psl* (Prisma Schema Language) is the library that defines how
+Additionally, the _psl_ (Prisma Schema Language) is the library that defines how
 the language looks like, how it's parsed, etc.
 
 You'll also find:
-- *libs*, for various (small) libraries such as macros, user facing errors,
-    various connector/database-specific libraries, etc.
+
+- _libs_, for various (small) libraries such as macros, user facing errors,
+  various connector/database-specific libraries, etc.
 - a `docker-compose.yml` file that's helpful for running tests and bringing up
-    containers for various databases
+  containers for various databases
 - a `shell.nix` file for bringing up all dependencies and making it easy to
-    build the code in this repository (the use of this file and `nix` is
-    entirely optional, but can be a good and easy way to get started)
+  build the code in this repository (the use of this file and `nix` is
+  entirely optional, but can be a good and easy way to get started)
 - an `.envrc` file to make it easier to set everything up, including the `nix
-    shell`
+shell`
 
 ## Documentation
 
@@ -80,7 +81,7 @@ compiled binaries inside the repository root in the `target/debug` (without
 
 ## Prisma Schema Language
 
-The *Prisma Schema Language* is a library which defines the data structures and
+The _Prisma Schema Language_ is a library which defines the data structures and
 parsing rules for prisma files, including the available database connectors. For
 more technical details, please check the [library README](./psl/README.md).
 
@@ -90,23 +91,25 @@ also used as input for the query engine.
 
 ## Query Engine
 
-The *Query Engine* is how Prisma Client queries are executed. Here's a brief
+The _Query Engine_ is how Prisma Client queries are executed. Here's a brief
 description of what it does:
+
 - takes as inputs an annotated version of the Prisma Schema file called the
-    DataModeL (DML),
+  DataModeL (DML),
 - using the DML (specifically, the datasources and providers), it builds up a
-    [GraphQL](https://graphql.org) model for queries and responses,
+  [GraphQL](https://graphql.org) model for queries and responses,
 - runs as a server listening for GraphQL queries,
 - it translates the queries to the respective native datasource(s) and
-    returns GraphQL responses, and
+  returns GraphQL responses, and
 - handles all connections and communication with the native databases.
 
 When used through Prisma Client, there are two ways for the Query Engine to
 be executed:
+
 - as a binary, downloaded during installation, launched at runtime;
-    communication happens via HTTP (`./query-engine/query-engine`)
+  communication happens via HTTP (`./query-engine/query-engine`)
 - as a native, platform-specific Node.js addon; also downloaded during
-    installation (`./query-engine/query-engine-node-api`)
+  installation (`./query-engine/query-engine-node-api`)
 
 ### Usage
 
@@ -119,7 +122,7 @@ Notable environment flags:
 
 - `RUST_LOG_FORMAT=(devel|json)` sets the log format. By default outputs `json`.
 - `QE_LOG_LEVEL=(info|debug|trace)` sets the log level for the Query Engine. If
-    you need Query Graph debugging logs, set it to "trace"
+  you need Query Graph debugging logs, set it to "trace"
 - `FMT_SQL=1` enables logging _formatted_ SQL queries
 - `PRISMA_DML_PATH=[path_to_datamodel_file]` should point to the datamodel file
   location. This or `PRISMA_DML` is required for the Query Engine to run.
@@ -151,13 +154,15 @@ Navigate to `http://localhost:3000` to view the Grafana dashboard.
 
 ## Schema Engine
 
-The *Schema Engine* does a couple of things:
+The _Schema Engine_ does a couple of things:
+
 - creates new migrations by comparing the prisma file with the current state of
-    the database, in order to bring the database in sync with the prisma file
+  the database, in order to bring the database in sync with the prisma file
 - run these migrations and keeps track of which migrations have been executed
 - (re-)generate a prisma schema file starting from a live database
 
 The engine uses:
+
 - the prisma files, as the source of truth
 - the database it connects to, for diffing and running migrations, as well as
   keeping track of migrations in the `_prisma_migrations` table
@@ -172,11 +177,12 @@ a node package. You can read more [here](./prisma-schema-wasm/README.md).
 ## Debugging
 
 When trying to debug code, here's a few things that might be useful:
+
 - use the language server; being able to go to definition and reason about code
-    can make things a lot easier,
+  can make things a lot easier,
 - add `dbg!()` statements to validate code paths, inspect variables, etc.,
 - you can control the amount of logs you see, and where they come from using the
-    `RUST_LOG` environment variable; see [the documentation](https://docs.rs/env_logger/0.9.1/env_logger/#enabling-logging)
+  `RUST_LOG` environment variable; see [the documentation](https://docs.rs/env_logger/0.9.1/env_logger/#enabling-logging)
 
 ## Testing
 
@@ -195,7 +201,35 @@ integration tests.
 
   You can find them at `./query-engine/connector-test-kit-rs`.
 
-### Set up & run tests:
+> [!NOTE]
+> Help needed: document how to run
+> - `quaint` tests
+> - schema engine tests
+>
+> This can be a good first contribution.
+
+### Run unit tests
+
+To run unit tests for the whole workspace (except `quaint`, which requires
+additional steps), skipping the packages with heavy integration tests (you
+probably want to run them separately) as well as the `query-engine-node-api`
+package, use this command:
+
+```bash
+make test-unit
+```
+
+> [!WARNING]
+> Running just `cargo test` for the whole workspace will not work because the
+> `query-engine-node-api` package can only be compiled as a library crate and
+> can't be linked into a test binary due to the dependency on external Node.js
+> symbols. Additionally, some crates require passing explicit cargo features to
+> enable database connectors.
+>
+> If you really want to run *all* tests for the whole workspace, use
+> `cargo test --workspace --exclude=query-engine-node-api --all-features`.
+
+### Set up & run query engine integration tests:
 
 **Prerequisites:**
 
@@ -228,16 +262,12 @@ To actually get the tests working, read the contents of `.envrc`. Then `Edit env
 the correct values for the following variables:
 
 - `WORKSPACE_ROOT` should point to the root directory of `prisma-engines` project.
-- `PRISMA_BINARY_PATH` is usually
-  `%WORKSPACE_ROOT%\target\release\query-engine.exe`.
-- `SCHEMA_ENGINE_BINARY_PATH` should be
-  `%WORKSPACE_ROOT%\target\release\schema-engine.exe`.
 
 Other variables may or may not be useful.
 
 **Run:**
 
-Run `cargo test` in the repository root.
+Run `cargo test -p query-engine-tests` in the repository root.
 
 ### Testing driver adapters
 
@@ -273,10 +303,12 @@ You can trigger releases from this repository to npm that can be used for testin
 
 Any branch name starting with `integration/` will, first, run the full test suite in GH Actions and, second, run the release workflow (build and upload engines to S3 & R2).
 To trigger the release on any other branch, you have two options:
+
 - Either run [build-engines](https://github.com/prisma/prisma-engines/actions/workflows/build-engines.yml) workflow on a specified branch manually.
 - Or add `[integration]` string anywhere in your commit messages/
 
 The journey through the pipeline is the same as a commit on the `main` branch.
+
 - It will trigger [`prisma/engines-wrapper`](https://github.com/prisma/engines-wrapper) and publish a new [`@prisma/engines-version`](https://www.npmjs.com/package/@prisma/engines-version) npm package but on the `integration` tag.
 - Which triggers [`prisma/prisma`](https://github.com/prisma/prisma) to create a `chore(Automated Integration PR): [...]` PR with a branch name also starting with `integration/`
 - Since in `prisma/prisma` we also trigger the publish pipeline when a branch name starts with `integration/`, this will publish all `prisma/prisma` monorepo packages to npm on the `integration` tag.
@@ -285,12 +317,13 @@ The journey through the pipeline is the same as a commit on the `main` branch.
 This end to end will take minimum ~1h20 to complete, but is completely automated :robot:
 
 Notes:
+
 - tests and publishing workflows are run in parallel in both `prisma/prisma-engines` and `prisma/prisma` repositories. So, it is possible that the engines would be published and only then test suite will
-discover a defect. It is advised that to keep an eye on both test and publishing workflows.
+  discover a defect. It is advised that to keep an eye on both test and publishing workflows.
 
 #### Manual integration releases from this repository to npm
 
-Additionally to the automated integration release for `integration/` branches, you can also trigger a publish **manually** in the Buildkite `[Test] Prisma Engines` job if that succeeds for _any_ branch name. Click "🚀 Publish binaries" at the bottom of the test list to unlock the publishing step. When all the jobs in `[Release] Prisma Engines` succeed, you also have to unlock the next step by clicking "🚀 Publish client". This will then trigger the same journey as described above.
+Additionally to the automated integration release for `integration/` branches, you can also trigger a publish by pushing a commit with the content `[integration]`.
 
 ## Parallel rust-analyzer builds
 
@@ -301,10 +334,9 @@ rust-analyzer. To avoid this. Open VSCode settings and search for `Check on Save
 --target-dir:/tmp/rust-analyzer-check
 ```
 
-
 ## Community PRs: create a local branch for a branch coming from a fork
 
-To trigger an [Automated integration releases from this repository to npm](#automated-integration-releases-from-this-repository-to-npm) or [Manual integration releases from this repository to npm](#manual-integration-releases-from-this-repository-to-npm) branches of forks need to be pulled into this repository so the Buildkite job is triggered. You can use these GitHub and git CLI commands to achieve that easily:
+To trigger an [Automated integration releases from this repository to npm](#automated-integration-releases-from-this-repository-to-npm) or [Manual integration releases from this repository to npm](#manual-integration-releases-from-this-repository-to-npm) branches of forks need to be pulled into this repository so the Github Actions job is triggered. You can use these GitHub and git CLI commands to achieve that easily:
 
 ```
 gh pr checkout 4375

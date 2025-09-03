@@ -1626,8 +1626,9 @@ async fn re_introspecting_custom_compound_unique_upgrade(api: &mut TestApi) -> T
 #[test_connector(tags(Postgres12))]
 async fn re_introspecting_custom_index_order(api: &mut TestApi) -> TestResult {
     let schema_name = api.schema_name();
-    let create_table =
-        format!("CREATE TABLE \"{schema_name}\".\"A\" (id SERIAL PRIMARY KEY, a jsonb not null, b jsonb not null, c jsonb not null)",);
+    let create_table = format!(
+        "CREATE TABLE \"{schema_name}\".\"A\" (id SERIAL PRIMARY KEY, a jsonb not null, b jsonb not null, c jsonb not null)",
+    );
     let create_idx_a = format!("CREATE INDEX \"aaaaaa\" ON \"{schema_name}\".\"A\" USING GIN (b);",);
     let create_idx_b = format!("CREATE INDEX \"bbbbbb\" ON \"{schema_name}\".\"A\" USING GIN (a);",);
     let create_idx_c = format!("CREATE INDEX \"cccccc\" ON \"{schema_name}\".\"A\" USING GIN (c);",);
@@ -1668,7 +1669,7 @@ async fn re_introspecting_custom_index_order(api: &mut TestApi) -> TestResult {
     Ok(())
 }
 
-#[test_connector(tags(Postgres), preview_features("multiSchema"))]
+#[test_connector(tags(Postgres))]
 async fn re_introspecting_with_schemas_property(api: &mut TestApi) -> TestResult {
     let create_schema = "CREATE SCHEMA \"first\"";
     let create_table = "CREATE TABLE \"first\".\"A\" (id TEXT PRIMARY KEY)";
@@ -1684,8 +1685,8 @@ async fn re_introspecting_with_schemas_property(api: &mut TestApi) -> TestResult
 
     let input_dm = indoc! {r#"
           generator client {
-           provider        = "prisma-client-js"
-           previewFeatures = ["multiSchema"]
+           provider = "prisma-client-js"
+           previewFeatures = []
          }
 
          datasource myds {
@@ -1700,7 +1701,7 @@ async fn re_introspecting_with_schemas_property(api: &mut TestApi) -> TestResult
     let expected = expect![[r#"
         generator client {
           provider        = "prisma-client-js"
-          previewFeatures = ["multiSchema"]
+          previewFeatures = []
         }
 
         datasource myds {

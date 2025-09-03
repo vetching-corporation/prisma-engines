@@ -4,13 +4,16 @@ use query_core::{
     ConnectRecords, DeleteManyRecords, DeleteRecord, DisconnectRecords, RawQuery, UpdateManyRecords, UpdateRecord,
     UpdateRecordWithSelection, UpdateRecordWithoutSelection, WriteQuery,
 };
-use query_structure::{PrismaValue, PrismaValueType, QueryArguments, RecordFilter, RelationLoadStrategy, Take};
+use query_structure::{
+    FieldSelection, Filter, IntoFilter, Model, PrismaValue, PrismaValueType, QueryArguments, RecordFilter,
+    RelationLoadStrategy, Take,
+};
 use sql_query_builder::write::split_write_args_by_shape;
 use std::{collections::BTreeMap, iter, mem};
 
 use crate::{
     TranslateError, binding,
-    expression::{Binding, Expression, FieldInitializer, FieldOperation, Pagination},
+    expression::{Binding, Expression, FieldInitializer, FieldOperation, InMemoryOps, Pagination},
     translate::TranslateResult,
 };
 
@@ -124,6 +127,16 @@ pub(crate) fn translate_write_query(query: WriteQuery, builder: &dyn QueryBuilde
         }) => {
             let projection = selected_fields.as_ref().map(|f| &f.fields);
 
+            if args.is_empty() {
+                let projection = projection.cloned().unwrap_or_else(|| model.primary_identifier());
+                let query = build_query_from_record_filter(builder, &model, record_filter, &projection, None)?;
+                return if selected_fields.is_some() {
+                    Ok(Expression::Query(query))
+                } else {
+                    Ok(Expression::Execute(query))
+                };
+            }
+
             let selector_bindings = limit
                 .map(|limit| extract_selectors_that_require_limit(&mut record_filter, limit))
                 .unwrap_or_default();
@@ -169,10 +182,7 @@ pub(crate) fn translate_write_query(query: WriteQuery, builder: &dyn QueryBuilde
         })) => {
             let query = if args.is_empty() {
                 // We can just issue a read query if there are no write arguments.
-                let query_args = QueryArguments::from((model.clone(), record_filter.filter)).with_take(Take::Some(1));
-                builder
-                    .build_get_records(&model, query_args, &selected_fields, RelationLoadStrategy::Query)
-                    .map_err(TranslateError::QueryBuildFailure)?
+                build_query_from_record_filter(builder, &model, record_filter, &selected_fields, Some(Take::Some(1)))?
             } else {
                 builder
                     .build_update(&model, record_filter, args, Some(&selected_fields))
@@ -358,6 +368,34 @@ pub(crate) fn translate_write_query(query: WriteQuery, builder: &dyn QueryBuilde
     })
 }
 
+fn build_query_from_record_filter(
+    builder: &dyn QueryBuilder,
+    model: &Model,
+    record_filter: RecordFilter,
+    projection: &FieldSelection,
+    take: Option<Take>,
+) -> Result<query_builder::DbQuery, TranslateError> {
+    // It's possible for us to receive selectors here and they cannot be passed to
+    // a read query directly, so we need to build a filter from them.
+    let filter = record_filter
+        .selectors
+        .map(IntoFilter::filter)
+        .into_iter()
+        .fold(record_filter.filter, |acc, f| Filter::and(vec![acc, f]));
+    let mut query_args = QueryArguments::from((model.clone(), filter));
+    if let Some(take) = take {
+        query_args.take = take;
+    }
+
+    let query = builder
+        .build_get_records(model, query_args, projection, RelationLoadStrategy::Query)
+        .map_err(TranslateError::QueryBuildFailure)?
+        .into_iter()
+        .exactly_one()
+        .expect("should have exactly one query for update with selection");
+    Ok(query)
+}
+
 /// Extracts selectors from the filter that require an in-memory limit operation as bindings.
 /// Selectors in the [`RecordFilter`] are replaced with placeholders that refer to the
 /// returned bindings.
@@ -369,15 +407,15 @@ fn extract_selectors_that_require_limit(record_filter: &mut RecordFilter, limit:
         .flat_map(|result| result.pairs.iter_mut())
         .filter_map(|(field, value)| {
             let typ = value.r#type();
-            if !matches!(typ, PrismaValueType::Array(_)) {
+            if !matches!(typ, PrismaValueType::List(_)) {
                 return None;
             }
 
             let name = binding::selector(field);
             let value = mem::replace(value, PrismaValue::placeholder(name.clone(), typ));
             let pagination = Pagination::builder().take(limit as i64).build();
-            let expr = Expression::Value(value).into();
-            Some(Binding::new(name, Expression::Paginate { expr, pagination }))
+            let expr = Expression::Value(value);
+            Some(Binding::new(name, InMemoryOps::from(pagination).into_expression(expr)))
         })
         .collect_vec()
 }

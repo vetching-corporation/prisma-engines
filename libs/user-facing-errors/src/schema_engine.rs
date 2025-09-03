@@ -255,8 +255,12 @@ impl crate::UserFacingError for ProviderSwitchedError {
         let expected_provider = &self.expected_provider;
 
         match (provider.as_str(), expected_provider.as_str()) {
-            ("cockroachdb", "postgresql") => format!("The datasource provider `{provider}` specified in your schema does not match the one specified in the migration_lock.toml, `{expected_provider}`. Check out the following documentation for how to resolve this: https://pris.ly/d/cockroachdb-postgresql-provider"),
-            _ => format!("The datasource provider `{provider}` specified in your schema does not match the one specified in the migration_lock.toml, `{expected_provider}`. Please remove your current migration directory and start a new migration history with prisma migrate dev. Read more: https://pris.ly/d/migrate-provider-switch")
+            ("cockroachdb", "postgresql") => format!(
+                "The datasource provider `{provider}` specified in your schema does not match the one specified in the migration_lock.toml, `{expected_provider}`. Check out the following documentation for how to resolve this: https://pris.ly/d/cockroachdb-postgresql-provider"
+            ),
+            _ => format!(
+                "The datasource provider `{provider}` specified in your schema does not match the one specified in the migration_lock.toml, `{expected_provider}`. Please remove your current migration directory and start a new migration history with prisma migrate dev. Read more: https://pris.ly/d/migrate-provider-switch"
+            ),
         }
     }
 }
@@ -281,6 +285,20 @@ pub struct ForeignKeyCreationNotAllowed;
     message = "Direct execution of DDL (Data Definition Language) SQL statements is disabled on this database. Please read more here about how to handle this: https://pris.ly/d/migrate-no-direct-ddl"
 )]
 pub struct DirectDdlNotAllowed;
+
+#[derive(Debug, SimpleUserFacingError)]
+#[user_facing(
+    code = "P3023",
+    message = "For the current database, `externalTables` & `externalEnums` in your prisma config must contain only fully qualified identifiers (e.g. `schema_name.table_name`)."
+)]
+pub struct MissingNamespaceInExternalTables;
+
+#[derive(Debug, SimpleUserFacingError)]
+#[user_facing(
+    code = "P3024",
+    message = "For the current database, `externalTables` & `externalEnums` in your prisma config must contain only simple identifiers without a schema name."
+)]
+pub struct UnexpectedNamespaceInExternalTables;
 
 #[derive(Debug, SimpleUserFacingError)]
 #[user_facing(code = "P4001", message = "The introspected database was empty.")]

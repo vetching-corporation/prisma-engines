@@ -6,12 +6,12 @@ use super::{
     default_value,
     names::{NameTaken, Names},
 };
-use crate::datamodel_connector::{walker_ext_traits::*, ConnectorCapability};
+use crate::datamodel_connector::{ConnectorCapability, walker_ext_traits::*};
 use crate::{diagnostics::DatamodelError, validate::validation_pipeline::context::Context};
 use parser_database::{
+    ScalarFieldType, ScalarType,
     ast::{self, WithSpan},
     walkers::{FieldWalker, PrimaryKeyWalker, ScalarFieldAttributeWalker, ScalarFieldWalker, TypedFieldWalker},
-    ScalarFieldType, ScalarType,
 };
 
 pub(super) fn validate_client_name(field: FieldWalker<'_>, names: &Names<'_>, ctx: &mut Context<'_>) {
@@ -123,10 +123,10 @@ pub(crate) fn validate_length_used_with_correct_types(
         return;
     }
 
-    if let Some(r#type) = attr.as_index_field().scalar_field_type().as_builtin_scalar() {
-        if [ScalarType::String, ScalarType::Bytes].iter().any(|t| t == &r#type) {
-            return;
-        }
+    if let Some(r#type) = attr.as_index_field().scalar_field_type().as_builtin_scalar()
+        && [ScalarType::String, ScalarType::Bytes].iter().any(|t| t == &r#type)
+    {
+        return;
     };
 
     let message = "The length argument is only allowed with field types `String` or `Bytes`.";
@@ -148,16 +148,16 @@ pub(super) fn validate_native_type_arguments<'db>(field: impl Into<TypedFieldWal
     };
 
     // Validate that the attribute is scoped with the right datasource name.
-    if let Some(datasource) = ctx.datasource {
-        if datasource.name != attr_scope {
-            let suggestion = [datasource.name.as_str(), type_name].join(".");
-            ctx.push_error(DatamodelError::new_invalid_prefix_for_native_types(
-                attr_scope,
-                &datasource.name,
-                &suggestion,
-                span,
-            ));
-        }
+    if let Some(datasource) = ctx.datasource
+        && datasource.name != attr_scope
+    {
+        let suggestion = [datasource.name.as_str(), type_name].join(".");
+        ctx.push_error(DatamodelError::new_invalid_prefix_for_native_types(
+            attr_scope,
+            &datasource.name,
+            &suggestion,
+            span,
+        ));
     }
 
     let constructor = if let Some(cons) = ctx.connector.find_native_type_constructor(type_name) {
@@ -354,9 +354,13 @@ pub(super) fn validate_unsupported_field_type(field: ScalarFieldWalker<'_>, ctx:
             let prisma_type = connector.scalar_type_for_native_type(&native_type);
 
             let msg = format!(
-                        "The type `Unsupported(\"{}\")` you specified in the type definition for the field `{}` is supported as a native type by Prisma. Please use the native type notation `{} @{}.{}` for full support.",
-                        unsupported_lit, field.name(), prisma_type.as_str(), &source.name, connector.native_type_to_string(&native_type)
-                    );
+                "The type `Unsupported(\"{}\")` you specified in the type definition for the field `{}` is supported as a native type by Prisma. Please use the native type notation `{} @{}.{}` for full support.",
+                unsupported_lit,
+                field.name(),
+                prisma_type.as_str(),
+                &source.name,
+                connector.native_type_to_string(&native_type)
+            );
 
             ctx.push_error(DatamodelError::new_validation_error(&msg, field.ast_field().span()));
         }

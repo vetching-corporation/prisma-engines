@@ -201,11 +201,28 @@ impl QueryDocumentParser {
 
                 let argument_path = argument_path.add(input_field.name.clone().into_owned());
 
+                let validate_other_required_args = |name: &str| {
+                    for req_name in input_field.requires_other_fields() {
+                        if !given_arguments.iter().any(|(name, _)| name == req_name) {
+                            let Some(req_field) = schema_field.arguments().iter().find(|f| f.name == *req_name) else {
+                                panic!("argument {name} requires unknown argument {req_name}")
+                            };
+                            return Err(ValidationError::conditionally_required_argument_missing(
+                                &selection_path.segments(),
+                                &argument_path.parent().add(req_name.to_string()).segments(),
+                                &argument_path.segments(),
+                                &conversions::input_types_to_input_type_descriptions(req_field.field_types()),
+                            ));
+                        }
+                    }
+                    Ok(())
+                };
+
                 // If optional and not present ignore the field.
                 // If present, parse normally.
                 // If not present but required, throw a validation error.
                 match selection_arg {
-                    Some((_, value)) => Some(
+                    Some((name, value)) => Some(validate_other_required_args(&name).and_then(|_| {
                         self.parse_input_value(
                             selection_path.clone(),
                             argument_path,
@@ -216,8 +233,8 @@ impl QueryDocumentParser {
                         .map(|value| ParsedArgument {
                             name: input_field.name.clone().into_owned(),
                             value,
-                        }),
-                    ),
+                        })
+                    })),
                     None if !input_field.is_required() => None,
                     _ => Some(Err(ValidationError::required_argument_missing(
                         selection_path.segments(),
@@ -226,8 +243,6 @@ impl QueryDocumentParser {
                     ))),
                 }
             })
-            .collect::<Vec<QueryParserResult<ParsedArgument<'_>>>>()
-            .into_iter()
             .collect()
     }
 
@@ -277,7 +292,7 @@ impl QueryDocumentParser {
                         &selection_path,
                         &argument_path,
                         &value,
-                    )?))
+                    )?));
                 }
                 // With the JSON protocol, JSON values are sent as deserialized values.
                 // This means that a JsonList([1, 2]) will be coerced as an `ArgumentValue::List([1, 2])`.
@@ -301,17 +316,18 @@ impl QueryDocumentParser {
                 (ArgumentValue::Scalar(pv), input_type) => match (pv, input_type) {
                     // Null handling
                     (PrismaValue::Null, InputType::Scalar(ScalarType::Null)) => {
-                        return Ok(ParsedInputValue::Single(PrismaValue::Null))
+                        return Ok(ParsedInputValue::Single(PrismaValue::Null));
                     }
                     (PrismaValue::Null, input_type) => try_this!(Err(ValidationError::required_argument_missing(
                         selection_path.segments(),
                         argument_path.segments(),
-                        &conversions::input_types_to_input_type_descriptions(&[input_type.clone()],),
+                        &conversions::input_types_to_input_type_descriptions(std::slice::from_ref(input_type)),
                     ))),
                     // Scalar handling
-                    (pv, InputType::Scalar(st)) => try_this!(self
-                        .parse_scalar(&selection_path, &argument_path, pv, *st, &value)
-                        .map(ParsedInputValue::Single)),
+                    (pv, InputType::Scalar(st)) => try_this!(
+                        self.parse_scalar(&selection_path, &argument_path, pv, *st, &value)
+                            .map(ParsedInputValue::Single)
+                    ),
 
                     // Enum handling
                     (pv @ PrismaValue::Enum(_), InputType::Enum(et)) => {
@@ -336,20 +352,22 @@ impl QueryDocumentParser {
                 },
 
                 // List handling.
-                (ArgumentValue::List(values), InputType::List(l)) => try_this!(self
-                    .parse_list(&selection_path, &argument_path, values.clone(), l, query_schema)
-                    .map(ParsedInputValue::List)),
+                (ArgumentValue::List(values), InputType::List(l)) => try_this!(
+                    self.parse_list(&selection_path, &argument_path, values.clone(), l, query_schema)
+                        .map(ParsedInputValue::List)
+                ),
 
                 // Object handling
-                (ArgumentValue::Object(o) | ArgumentValue::FieldRef(o), InputType::Object(obj)) => try_this!(self
-                    .parse_input_object(
+                (ArgumentValue::Object(o) | ArgumentValue::FieldRef(o), InputType::Object(obj)) => try_this!(
+                    self.parse_input_object(
                         selection_path.clone(),
                         argument_path.clone(),
                         o.clone(),
                         obj,
                         query_schema,
                     )
-                    .map(ParsedInputValue::Map)),
+                    .map(ParsedInputValue::Map)
+                ),
 
                 // Invalid combinations
                 (_, input_type) => try_this!(Err(ValidationError::invalid_argument_type(
@@ -612,7 +630,7 @@ impl QueryDocumentParser {
                     selection_path.clone(),
                     argument_path.clone(),
                     val,
-                    &[value_type.clone()],
+                    std::slice::from_ref(value_type),
                     query_schema,
                 )
             })
@@ -696,9 +714,7 @@ impl QueryDocumentParser {
                     Some(default_value) => {
                         let default_pv = match self {
                             Self::WithEagerDefaultEvaluation { default_now } => match default_value {
-                                DefaultKind::Expression(ref expr)
-                                    if matches!(expr.generator(), ValueGeneratorFn::Now) =>
-                                {
+                                DefaultKind::Expression(expr) if matches!(expr.generator(), ValueGeneratorFn::Now) => {
                                     default_now.clone()
                                 }
                                 _ => default_value.get_evaluated()?,
@@ -822,8 +838,8 @@ pub(crate) mod conversions {
     use std::borrow::Cow;
 
     use crate::{
-        schema::{InputType, OutputType},
         ArgumentValue,
+        schema::{InputType, OutputType},
     };
     use query_structure::{Placeholder, PrismaValue};
     use schema::InnerOutputType;
@@ -975,7 +991,15 @@ impl Path {
     }
 
     pub(crate) fn last(&self) -> Option<&str> {
-        Some(&self.next.as_ref().as_ref()?.0)
+        Some(&self.next()?.0)
+    }
+
+    pub(crate) fn parent(&self) -> Self {
+        self.next().map(|(_, p)| p.clone()).unwrap_or_default()
+    }
+
+    fn next(&self) -> Option<&(String, Path)> {
+        (*self.next).as_ref()
     }
 
     pub(crate) fn segments(&self) -> Vec<&str> {
@@ -993,5 +1017,46 @@ impl Path {
 impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.segments().join("."))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Path;
+
+    #[test]
+    fn test_path_segments() {
+        let path = Path::default()
+            .add("a".to_string())
+            .add("b".to_string())
+            .add("c".to_string());
+        assert_eq!(path.segments(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_path_last() {
+        let path = Path::default()
+            .add("a".to_string())
+            .add("b".to_string())
+            .add("c".to_string());
+        assert_eq!(path.last(), Some("c"));
+    }
+
+    #[test]
+    fn test_path_parent_segments() {
+        let path = Path::default()
+            .add("a".to_string())
+            .add("b".to_string())
+            .add("c".to_string());
+        assert_eq!(path.parent().segments(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_path_walk_to_root() {
+        let path = Path::default()
+            .add("a".to_string())
+            .add("b".to_string())
+            .add("c".to_string());
+        assert_eq!(path.parent().parent().parent().segments(), Vec::<&str>::new());
     }
 }

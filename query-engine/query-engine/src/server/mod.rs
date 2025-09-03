@@ -1,11 +1,11 @@
 use crate::context::PrismaContext;
 use crate::features::Feature;
 use crate::logger::TracingConfig;
-use crate::{opt::PrismaOpt, PrismaResult};
+use crate::{PrismaResult, opt::PrismaOpt};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{header::CONTENT_TYPE, Body, HeaderMap, Method, Request, Response, Server, StatusCode};
+use hyper::{Body, HeaderMap, Method, Request, Response, Server, StatusCode, header::CONTENT_TYPE};
 use query_core::{ExtendedUserFacingError, TransactionOptions, TxId};
-use request_handlers::{dmmf, render_graphql_schema, RequestBody, RequestHandler};
+use request_handlers::{RequestBody, RequestHandler, dmmf, render_graphql_schema};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -140,11 +140,11 @@ async fn request_handler(cx: Arc<PrismaContext>, req: Request<Body>) -> Result<R
                     let handler = RequestHandler::new(cx.executor(), cx.query_schema(), cx.engine_protocol());
                     let mut result = handler.handle(body, tx_id, traceparent).instrument(span).await;
 
-                    if cx.logger.tracing_config().should_capture() {
-                        if let Some(trace) = cx.logger.exporter().stop_capturing(request_id).await {
-                            result.set_extension("traces".to_owned(), json!(trace.spans));
-                            result.set_extension("logs".to_owned(), json!(trace.events));
-                        }
+                    if cx.logger.tracing_config().should_capture()
+                        && let Some(trace) = cx.logger.exporter().stop_capturing(request_id).await
+                    {
+                        result.set_extension("traces".to_owned(), json!(trace.spans));
+                        result.set_extension("logs".to_owned(), json!(trace.events));
                     }
 
                     let res = build_json_response(StatusCode::OK, &result);
@@ -276,7 +276,7 @@ async fn transaction_start_handler(cx: Arc<PrismaContext>, req: Request<Body>) -
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from("Invalid transaction options"))
-                .unwrap())
+                .unwrap());
         }
     };
 

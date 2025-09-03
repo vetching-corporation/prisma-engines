@@ -1,10 +1,10 @@
 use super::*;
 use crate::ensure_db_names::UNIQUE_TEST_DATABASE_NAMES;
-use darling::{ast::NestedMeta, FromMeta};
+use darling::{FromMeta, ast::NestedMeta};
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 pub fn relation_link_test_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
     let attributes_meta = match NestedMeta::parse_meta_list(attr.into()) {
@@ -23,6 +23,8 @@ pub fn relation_link_test_impl(attr: TokenStream, input: TokenStream) -> TokenSt
 
     let only = args.only;
     let exclude = args.exclude;
+    let only_executors = args.only_executors.as_ref();
+    let excluded_executors = args.exclude_executors.as_ref();
     let id_only = args.id_only;
     let on_parent = args.on_parent.relation_field;
     let on_child = args.on_child.relation_field;
@@ -69,6 +71,8 @@ pub fn relation_link_test_impl(attr: TokenStream, input: TokenStream) -> TokenSt
                 #id_only,
                 &[#only],
                 &[#exclude],
+                &[#(#only_executors),*],
+                &[#(#excluded_executors),*],
                 enumflags2::make_bitflags!(ConnectorCapability::{#(#required_capabilities)|*}),
                 (#suite_name, #test_name),
                 #runner_fn_ident,

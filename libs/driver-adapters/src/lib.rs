@@ -16,7 +16,7 @@ pub(crate) mod send_future;
 pub(crate) mod transaction;
 pub(crate) mod types;
 
-use crate::error::DriverAdapterError;
+use crate::error::{DriverAdapterError, MappedDriverAdapterError};
 use quaint::error::{DatabaseConstraint, Error as QuaintError, ErrorKind};
 
 #[cfg(target_arch = "wasm32")]
@@ -26,87 +26,105 @@ pub(crate) use wasm::result::AdapterResult;
 pub(crate) use napi::result::AdapterResult;
 
 impl From<DriverAdapterError> for QuaintError {
-    fn from(value: DriverAdapterError) -> Self {
-        match value {
-            DriverAdapterError::UnsupportedNativeDataType { native_type } => {
+    fn from(
+        DriverAdapterError {
+            mapped,
+            original_code,
+            original_message,
+        }: DriverAdapterError,
+    ) -> Self {
+        let mut builder = match mapped {
+            MappedDriverAdapterError::UnsupportedNativeDataType { native_type } => {
                 QuaintError::builder(ErrorKind::UnsupportedColumnType {
                     column_type: native_type,
                 })
-                .build()
             }
-            DriverAdapterError::InvalidIsolationLevel { level } => {
-                QuaintError::builder(ErrorKind::InvalidIsolationLevel(level)).build()
+            MappedDriverAdapterError::InvalidIsolationLevel { level } => {
+                QuaintError::builder(ErrorKind::InvalidIsolationLevel(level))
             }
-            DriverAdapterError::LengthMismatch { column } => {
-                QuaintError::builder(ErrorKind::LengthMismatch { column: column.into() }).build()
+            MappedDriverAdapterError::LengthMismatch { column } => {
+                QuaintError::builder(ErrorKind::LengthMismatch { column: column.into() })
             }
-            DriverAdapterError::UniqueConstraintViolation { constraint } => {
+            MappedDriverAdapterError::UniqueConstraintViolation { constraint } => {
                 QuaintError::builder(ErrorKind::UniqueConstraintViolation {
                     constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
                 })
-                .build()
             }
-            DriverAdapterError::NullConstraintViolation { constraint } => {
+            MappedDriverAdapterError::NullConstraintViolation { constraint } => {
                 QuaintError::builder(ErrorKind::NullConstraintViolation {
                     constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
                 })
-                .build()
             }
-            DriverAdapterError::ForeignKeyConstraintViolation { constraint } => {
+            MappedDriverAdapterError::ForeignKeyConstraintViolation { constraint } => {
                 QuaintError::builder(ErrorKind::ForeignKeyConstraintViolation {
                     constraint: constraint.map_or(DatabaseConstraint::CannotParse, DatabaseConstraint::from),
                 })
-                .build()
             }
-            DriverAdapterError::DatabaseDoesNotExist { db } => {
-                QuaintError::builder(ErrorKind::DatabaseDoesNotExist { db_name: db.into() }).build()
+            MappedDriverAdapterError::DatabaseNotReachable { host, port } => {
+                QuaintError::builder(ErrorKind::DatabaseNotReachable {
+                    database_location: quaint::error::DatabaseNotReachableLocation { host, port },
+                })
             }
-            DriverAdapterError::DatabaseAlreadyExists { db } => {
-                QuaintError::builder(ErrorKind::DatabaseAlreadyExists { db_name: db.into() }).build()
+            MappedDriverAdapterError::DatabaseDoesNotExist { db } => {
+                QuaintError::builder(ErrorKind::DatabaseDoesNotExist { db_name: db.into() })
             }
-            DriverAdapterError::DatabaseAccessDenied { db } => {
-                QuaintError::builder(ErrorKind::DatabaseAccessDenied { db_name: db.into() }).build()
+            MappedDriverAdapterError::DatabaseAlreadyExists { db } => {
+                QuaintError::builder(ErrorKind::DatabaseAlreadyExists { db_name: db.into() })
             }
-            DriverAdapterError::AuthenticationFailed { user } => {
-                QuaintError::builder(ErrorKind::AuthenticationFailed { user: user.into() }).build()
+            MappedDriverAdapterError::DatabaseAccessDenied { db } => {
+                QuaintError::builder(ErrorKind::DatabaseAccessDenied { db_name: db.into() })
             }
-            DriverAdapterError::TransactionWriteConflict => {
-                QuaintError::builder(ErrorKind::TransactionWriteConflict).build()
+            MappedDriverAdapterError::ConnectionClosed => QuaintError::builder(ErrorKind::ConnectionClosed),
+            MappedDriverAdapterError::TlsConnectionError { reason } => {
+                QuaintError::builder(ErrorKind::TlsConnectionError { message: reason })
             }
-            DriverAdapterError::TableDoesNotExist { table } => {
-                QuaintError::builder(ErrorKind::TableDoesNotExist { table: table.into() }).build()
+            MappedDriverAdapterError::AuthenticationFailed { user } => {
+                QuaintError::builder(ErrorKind::AuthenticationFailed { user: user.into() })
             }
-            DriverAdapterError::ColumnNotFound { column } => {
-                QuaintError::builder(ErrorKind::ColumnNotFound { column: column.into() }).build()
+            MappedDriverAdapterError::TransactionWriteConflict => {
+                QuaintError::builder(ErrorKind::TransactionWriteConflict)
             }
-            DriverAdapterError::TooManyConnections { cause } => {
-                QuaintError::builder(ErrorKind::TooManyConnections(cause.into())).build()
+            MappedDriverAdapterError::TableDoesNotExist { table } => {
+                QuaintError::builder(ErrorKind::TableDoesNotExist { table: table.into() })
             }
-            DriverAdapterError::ValueOutOfRange { cause } => {
-                QuaintError::builder(ErrorKind::ValueOutOfRange { message: cause }).build()
+            MappedDriverAdapterError::ColumnNotFound { column } => {
+                QuaintError::builder(ErrorKind::ColumnNotFound { column: column.into() })
             }
-            DriverAdapterError::MissingFullTextSearchIndex => {
-                QuaintError::builder(ErrorKind::MissingFullTextSearchIndex).build()
+            MappedDriverAdapterError::TooManyConnections { cause } => {
+                QuaintError::builder(ErrorKind::TooManyConnections(cause.into()))
             }
-            DriverAdapterError::TransactionAlreadyClosed { cause } => {
-                QuaintError::builder(ErrorKind::TransactionAlreadyClosed(cause)).build()
+            MappedDriverAdapterError::ValueOutOfRange { cause } => {
+                QuaintError::builder(ErrorKind::ValueOutOfRange { message: cause })
             }
-            DriverAdapterError::GenericJs { id } => QuaintError::external_error(id),
+            MappedDriverAdapterError::MissingFullTextSearchIndex => {
+                QuaintError::builder(ErrorKind::MissingFullTextSearchIndex)
+            }
+            MappedDriverAdapterError::TransactionAlreadyClosed { cause } => {
+                QuaintError::builder(ErrorKind::TransactionAlreadyClosed(cause))
+            }
+            MappedDriverAdapterError::GenericJs { id } => return QuaintError::external_error(id),
             #[cfg(feature = "postgresql")]
-            DriverAdapterError::Postgres(e) => e.into(),
+            MappedDriverAdapterError::Postgres(e) => return e.into(),
             #[cfg(feature = "mysql")]
-            DriverAdapterError::Mysql(e) => e.into(),
+            MappedDriverAdapterError::Mysql(e) => return e.into(),
             #[cfg(feature = "sqlite")]
-            DriverAdapterError::Sqlite(e) => e.into(),
+            MappedDriverAdapterError::Sqlite(e) => return e.into(),
             #[cfg(feature = "mssql")]
-            DriverAdapterError::Mssql(e) => e.into(),
+            MappedDriverAdapterError::Mssql(e) => return e.into(),
             // in future, more error types would be added and we'll need to convert them to proper QuaintErrors here
+        };
+        if let Some(original_code) = original_code {
+            builder.set_original_code(original_code);
         }
+        if let Some(original_message) = original_message {
+            builder.set_original_message(original_message);
+        }
+        builder.build()
     }
 }
 
-pub use factory::{adapter_factory_from_js, JsAdapterFactory};
-pub use queryable::{queryable_from_js, JsQueryable};
+pub use factory::{JsAdapterFactory, adapter_factory_from_js};
+pub use queryable::{JsQueryable, queryable_from_js};
 pub(crate) use transaction::JsTransaction;
 pub use types::AdapterProvider;
 

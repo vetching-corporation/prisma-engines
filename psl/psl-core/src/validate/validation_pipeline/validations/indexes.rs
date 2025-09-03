@@ -1,11 +1,11 @@
 use super::{constraint_namespace::ConstraintName, database_name::validate_db_name};
 use crate::{
-    datamodel_connector::{walker_ext_traits::*, ConnectorCapability},
+    datamodel_connector::{ConnectorCapability, walker_ext_traits::*},
     diagnostics::DatamodelError,
     validate::validation_pipeline::context::Context,
 };
 use itertools::Itertools;
-use parser_database::{walkers::IndexWalker, IndexAlgorithm};
+use parser_database::{IndexAlgorithm, walkers::IndexWalker};
 
 /// Different databases validate index and unique constraint names in a certain namespace.
 /// Validates index and unique constraint names against the database requirements.
@@ -48,24 +48,23 @@ pub(super) fn unique_index_has_a_unique_custom_name_per_model(
 ) {
     let model = index.model();
 
-    if let Some(name) = index.name() {
-        if names
+    if let Some(name) = index.name()
+        && names
             .constraint_namespace
             .local_custom_name_scope_violations(model.id, name.as_ref())
-        {
-            let message = format!(
-                "The given custom name `{name}` has to be unique on the model. Please provide a different name for the `name` argument."
-            );
+    {
+        let message = format!(
+            "The given custom name `{name}` has to be unique on the model. Please provide a different name for the `name` argument."
+        );
 
-            let from_arg = index.ast_attribute().span_for_argument("name");
-            let span = from_arg.unwrap_or(index.ast_attribute().span);
+        let from_arg = index.ast_attribute().span_for_argument("name");
+        let span = from_arg.unwrap_or(index.ast_attribute().span);
 
-            ctx.push_error(DatamodelError::new_attribute_validation_error(
-                &message,
-                index.attribute_name(),
-                span,
-            ));
-        }
+        ctx.push_error(DatamodelError::new_attribute_validation_error(
+            &message,
+            index.attribute_name(),
+            span,
+        ));
     }
 }
 
@@ -270,14 +269,14 @@ pub(crate) fn clustering_can_be_defined_only_once(index: IndexWalker<'_>, ctx: &
         return;
     }
 
-    if let Some(pk) = index.model().primary_key() {
-        if matches!(pk.clustered(), Some(true) | None) {
-            ctx.push_error(DatamodelError::new_attribute_validation_error(
-                "A model can only hold one clustered index or key.",
-                index.attribute_name(),
-                index.ast_attribute().span,
-            ));
-        }
+    if let Some(pk) = index.model().primary_key()
+        && matches!(pk.clustered(), Some(true) | None)
+    {
+        ctx.push_error(DatamodelError::new_attribute_validation_error(
+            "A model can only hold one clustered index or key.",
+            index.attribute_name(),
+            index.ast_attribute().span,
+        ));
     }
 
     for other in index.model().indexes() {

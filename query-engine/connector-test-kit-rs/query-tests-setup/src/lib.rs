@@ -22,15 +22,12 @@ pub use schema_gen::*;
 pub use templating::*;
 
 use colored::Colorize;
-use futures::{future::Either, FutureExt};
 use prisma_metrics::{MetricRecorder, MetricRegistry, WithMetricsInstrumentation};
 use psl::datamodel_connector::ConnectorCapabilities;
 use std::future::Future;
-use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use tokio::runtime::Builder;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing_futures::WithSubscriber;
 
 pub type TestResult<T> = Result<T, TestError>;
@@ -102,6 +99,8 @@ pub fn run_relation_link_test<F>(
     id_only: bool,
     only: &[(&str, Option<&str>)],
     exclude: &[(&str, Option<&str>)],
+    only_executors: &[&str],
+    excluded_executors: &[&str],
     required_capabilities: ConnectorCapabilities,
     (suite_name, test_name): (&str, &str),
     test_fn: F,
@@ -126,6 +125,8 @@ pub fn run_relation_link_test<F>(
         id_only,
         only,
         exclude,
+        only_executors,
+        excluded_executors,
         required_capabilities,
         (suite_name, test_name),
         &boxify(test_fn),
@@ -142,20 +143,37 @@ fn run_relation_link_test_impl(
     id_only: bool,
     only: &[(&str, Option<&str>)],
     exclude: &[(&str, Option<&str>)],
+    only_executors: &[&str],
+    excluded_executors: &[&str],
     required_capabilities: ConnectorCapabilities,
     (suite_name, test_name): (&str, &str),
     test_fn: &dyn for<'a> Fn(&'a Runner, &'a DatamodelWithParams) -> BoxFuture<'a, TestResult<()>>,
     test_fn_full_name: &'static str,
     original_test_function_name: &'static str,
 ) {
+    if CONFIG.with_driver_adapter().is_some_and(|da| {
+        excluded_executors
+            .iter()
+            .any(|exec| exec.parse::<TestExecutor>() == Ok(da.test_executor))
+    }) {
+        return;
+    }
+
+    if !only_executors.is_empty()
+        && !CONFIG.with_driver_adapter().is_some_and(|da| {
+            only_executors
+                .iter()
+                .any(|exec| exec.parse::<TestExecutor>() == Ok(da.test_executor))
+        })
+    {
+        return;
+    }
+
     let full_test_name = build_full_test_name(test_fn_full_name, original_test_function_name);
 
     if ignore_lists::is_ignored(&full_test_name) {
         return;
     }
-
-    let expected_to_fail = ignore_lists::is_expected_to_fail(&full_test_name);
-    let failed = &AtomicBool::new(false);
 
     static RELATION_TEST_IDX: LazyLock<Option<usize>> =
         LazyLock::new(|| std::env::var("RELATION_TEST_IDX").ok().and_then(|s| s.parse().ok()));
@@ -190,53 +208,19 @@ fn run_relation_link_test_impl(
                         .await
                         .unwrap();
 
-                    let test_future = if expected_to_fail {
-                        Either::Left(async {
-                            match AssertUnwindSafe(test_fn(&runner, &dm)).catch_unwind().await {
-                                Ok(Ok(_)) => {},
-                                Ok(Err(err)) => {
-                                    failed.store(true, Ordering::Relaxed);
-                                    eprintln!("test failed as expected: {err}");
-                                }
-                                Err(panic) => {
-                                    failed.store(true, Ordering::Relaxed);
-                                    eprintln!(
-                                        "test panicked as expected: {}",
-                                        panic_utils::downcast_box_to_string(panic).unwrap_or_default()
-                                    );
-                                }
-                            };
-                            Ok(())
-                        })
-                    } else {
-                        Either::Right(test_fn(&runner, &dm))
-                    };
-
-                    test_future.with_subscriber(test_tracing_subscriber(
+                    test_fn(&runner, &dm).with_subscriber(test_tracing_subscriber(
                         ENV_LOG_LEVEL.to_string(),
                         log_tx,
                     )).with_recorder(recorder)
                     .await.unwrap();
 
-                    if let Err(e) = teardown_project(&datamodel, Default::default(), runner.schema_id()).await {
-                        if expected_to_fail {
-                            eprintln!("Teardown failed: {e}");
-                        } else {
-                            panic!("Teardown failed: {e}");
-                        }
-                    }
+                    teardown_project(&datamodel, Default::default(), runner.schema_id())
+                        .await
+                        .unwrap();
 
                 }
             );
-
-            if failed.load(Ordering::Relaxed) {
-                break;
-            }
         }
-    }
-
-    if expected_to_fail && !failed.load(Ordering::Relaxed) {
-        panic!("expected at least one of the variants of the relation test to fail but they all succeeded");
     }
 }
 
@@ -265,6 +249,7 @@ pub fn run_connector_test<T>(
     exclude: &[(&str, Option<&str>)],
     capabilities: ConnectorCapabilities,
     excluded_features: &[&str],
+    only_executors: &[&str],
     excluded_executors: &[&str],
     handler: fn() -> String,
     db_schemas: &[&str],
@@ -288,6 +273,7 @@ pub fn run_connector_test<T>(
         exclude,
         capabilities,
         excluded_features,
+        only_executors,
         excluded_executors,
         handler,
         db_schemas,
@@ -307,6 +293,7 @@ fn run_connector_test_impl(
     exclude: &[(&str, Option<&str>)],
     capabilities: ConnectorCapabilities,
     excluded_features: &[&str],
+    only_executors: &[&str],
     excluded_executors: &[&str],
     handler: fn() -> String,
     db_schemas: &[&str],
@@ -321,6 +308,16 @@ fn run_connector_test_impl(
             .iter()
             .any(|exec| exec.parse::<TestExecutor>() == Ok(da.test_executor))
     }) {
+        return;
+    }
+
+    if !only_executors.is_empty()
+        && !CONFIG.with_driver_adapter().is_some_and(|da| {
+            only_executors
+                .iter()
+                .any(|exec| exec.parse::<TestExecutor>() == Ok(da.test_executor))
+        })
+    {
         return;
     }
 
@@ -367,30 +364,7 @@ fn run_connector_test_impl(
         .unwrap();
         let schema_id = runner.schema_id();
 
-        let expected_to_fail = ignore_lists::is_expected_to_fail(&full_test_name);
-
-        let test_future = if expected_to_fail {
-            Either::Left(async {
-                match AssertUnwindSafe(test_fn(runner)).catch_unwind().await {
-                    Ok(Ok(_)) => panic!("expected this test to fail but it succeeded"),
-                    Ok(Err(err)) => {
-                        eprintln!("test failed as expected: {err}");
-                        Ok(())
-                    }
-                    Err(panic) => {
-                        eprintln!(
-                            "test panicked as expected: {}",
-                            panic_utils::downcast_box_to_string(panic).unwrap_or_default()
-                        );
-                        Ok(())
-                    }
-                }
-            })
-        } else {
-            Either::Right(test_fn(runner))
-        };
-
-        if let Err(err) = test_future
+        if let Err(err) = test_fn(runner)
             .with_subscriber(test_tracing_subscriber(ENV_LOG_LEVEL.to_string(), log_tx))
             .with_recorder(recorder)
             .await
@@ -403,13 +377,9 @@ fn run_connector_test_impl(
             panic!("💥 Test failed due to an error (see above)");
         }
 
-        if let Err(e) = crate::teardown_project(&datamodel, db_schemas, schema_id).await {
-            if expected_to_fail {
-                eprintln!("Teardown failed: {e}");
-            } else {
-                panic!("Teardown failed: {e}");
-            }
-        }
+        crate::teardown_project(&datamodel, db_schemas, schema_id)
+            .await
+            .unwrap();
     });
 }
 

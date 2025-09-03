@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 use schema_core::{
-    commands::create_migration, json_rpc::types::*, schema_connector::SchemaConnector, CoreError, CoreResult,
+    CoreError, CoreResult, commands::create_migration, json_rpc::types::*, schema_connector::SchemaConnector,
 };
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -14,6 +14,8 @@ pub struct CreateMigration<'a> {
     migrations_directory: &'a TempDir,
     draft: bool,
     name: &'a str,
+    filter: SchemaFilter,
+    init_script: &'a str,
 }
 
 /// The file name for migration scripts, not including the file extension.
@@ -94,6 +96,8 @@ impl<'a> CreateMigration<'a> {
         name: &'a str,
         files: &[(&'a str, &'a str)],
         migrations_directory: &'a TempDir,
+        filter: SchemaFilter,
+        init_script: &'a str,
     ) -> Self {
         CreateMigration {
             api,
@@ -107,6 +111,8 @@ impl<'a> CreateMigration<'a> {
             migrations_directory,
             draft: false,
             name,
+            filter,
+            init_script,
         }
     }
 
@@ -117,7 +123,8 @@ impl<'a> CreateMigration<'a> {
     }
 
     pub async fn send(self) -> CoreResult<CreateMigrationAssertion<'a>> {
-        let migrations_list = utils::list_migrations(self.migrations_directory.path()).unwrap();
+        let mut migrations_list = utils::list_migrations(self.migrations_directory.path()).unwrap();
+        migrations_list.shadow_db_init_script = self.init_script.to_string();
         let migration_name = self.name.to_owned();
         let mut migration_schema_cache = Default::default();
         let output = create_migration(
@@ -126,6 +133,7 @@ impl<'a> CreateMigration<'a> {
                 schema: SchemasContainer { files: self.files },
                 draft: self.draft,
                 migration_name: migration_name.clone(),
+                filters: self.filter,
             },
             self.api,
             &mut migration_schema_cache,

@@ -4,10 +4,10 @@ use std::{
 };
 
 use crate::result_node::ResultNode;
-use bon::bon;
+use bon::{Builder, bon};
 use query_builder::DbQuery;
 use query_core::{DataExpectation, DataRule};
-use query_structure::{InternalEnum, PrismaValue, PrismaValueType, ScalarWriteOperation, TaggedPrismaValue};
+use query_structure::{InternalEnum, PrismaValue, PrismaValueType, ScalarWriteOperation};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -70,9 +70,6 @@ pub enum Expression {
     /// A database query that returns the number of affected rows.
     Execute(DbQuery),
 
-    /// Reverses the result of an expression in memory.
-    Reverse(Box<Expression>),
-
     /// Sums a list of scalars returned by the expressions.
     Sum(Vec<Expression>),
 
@@ -128,15 +125,6 @@ pub enum Expression {
     /// or the set of rows that are in `from` but not in `to`).
     Diff { from: Box<Expression>, to: Box<Expression> },
 
-    /// Deduplicates the result of an expression by a list of fields.
-    DistinctBy { expr: Box<Expression>, fields: Vec<String> },
-
-    /// Pagination over the result of an expression.
-    Paginate {
-        expr: Box<Expression>,
-        pagination: Pagination,
-    },
-
     /// Initializes a record with a set of initializers.
     InitializeRecord {
         expr: Box<Expression>,
@@ -148,23 +136,116 @@ pub enum Expression {
         expr: Box<Expression>,
         fields: BTreeMap<String, FieldOperation>,
     },
+
+    /// Process records in memory.
+    Process {
+        expr: Box<Expression>,
+        operations: InMemoryOps,
+    },
+}
+
+impl Expression {
+    pub fn simplify(&mut self) {
+        match self {
+            Expression::Seq(seq) if seq.len() == 1 => {
+                *self = seq.pop().unwrap();
+                self.simplify();
+            }
+            Expression::Seq(seq) => {
+                seq.iter_mut().for_each(Expression::simplify);
+            }
+            Expression::Let { bindings, expr } => {
+                expr.simplify();
+
+                match (&bindings[..], &**expr) {
+                    ([binding], Self::Get { name }) if &binding.name == name => {
+                        *self = bindings.pop().unwrap().expr;
+                        self.simplify();
+                    }
+                    _ => bindings.iter_mut().for_each(|binding| binding.expr.simplify()),
+                }
+            }
+            Expression::Concat(vec) if vec.len() == 1 => {
+                *self = vec.pop().unwrap();
+                self.simplify();
+            }
+            Expression::Concat(vec) => {
+                vec.iter_mut().for_each(Expression::simplify);
+            }
+            Expression::Sum(vec) if vec.len() == 1 => {
+                *self = vec.pop().unwrap();
+                self.simplify();
+            }
+            Expression::Sum(vec) => {
+                vec.iter_mut().for_each(Expression::simplify);
+            }
+            Expression::Value(_) => {}
+            Expression::Get { .. } => {}
+            Expression::GetFirstNonEmpty { .. } => {}
+            Expression::Query(_) => {}
+            Expression::Execute(_) => {}
+            Expression::Unique(expr) => {
+                expr.simplify();
+            }
+            Expression::Required(expr) => {
+                expr.simplify();
+            }
+            Expression::Join { parent, children } => {
+                parent.simplify();
+                children.iter_mut().for_each(|child| child.child.simplify());
+            }
+            Expression::MapField { records, .. } => {
+                records.simplify();
+            }
+            Expression::Transaction(expr) => {
+                expr.simplify();
+            }
+            Expression::DataMap { expr, .. } => {
+                expr.simplify();
+            }
+            Expression::Validate { expr, .. } => {
+                expr.simplify();
+            }
+            Expression::If {
+                value, then, r#else, ..
+            } => {
+                value.simplify();
+                then.simplify();
+                r#else.simplify();
+            }
+            Expression::Unit => {}
+            Expression::Diff { from, to } => {
+                from.simplify();
+                to.simplify();
+            }
+            Expression::InitializeRecord { expr, .. } => {
+                expr.simplify();
+            }
+            Expression::MapRecord { expr, .. } => {
+                expr.simplify();
+            }
+            Expression::Process { expr, .. } => {
+                expr.simplify();
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum FieldInitializer {
     LastInsertId,
-    Value(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
+    Value(PrismaValue),
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum FieldOperation {
-    Set(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
-    Add(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
-    Subtract(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
-    Multiply(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
-    Divide(#[serde(serialize_with = "serialize_tagged_value")] PrismaValue),
+    Set(PrismaValue),
+    Add(PrismaValue),
+    Subtract(PrismaValue),
+    Multiply(PrismaValue),
+    Divide(PrismaValue),
 }
 
 impl TryFrom<ScalarWriteOperation> for FieldOperation {
@@ -192,26 +273,13 @@ pub struct Pagination {
     cursor: Option<HashMap<String, PrismaValue>>,
     take: Option<i64>,
     skip: Option<i64>,
-    linking_fields: Option<Vec<String>>,
 }
 
 #[bon]
 impl Pagination {
     #[builder]
     pub fn new(cursor: Option<HashMap<String, PrismaValue>>, take: Option<i64>, skip: Option<i64>) -> Self {
-        Self {
-            cursor,
-            take,
-            skip,
-            linking_fields: None,
-        }
-    }
-
-    pub fn with_linking_fields(self, linking_fields: impl Into<Vec<String>>) -> Self {
-        Self {
-            linking_fields: Some(linking_fields.into()),
-            ..self
-        }
+        Self { cursor, take, skip }
     }
 
     pub fn cursor(&self) -> Option<&HashMap<String, PrismaValue>> {
@@ -224,6 +292,45 @@ impl Pagination {
 
     pub fn skip(&self) -> Option<i64> {
         self.skip
+    }
+}
+
+#[derive(Debug, Default, Serialize, Builder)]
+#[serde(rename_all = "camelCase")]
+pub struct InMemoryOps {
+    pub(crate) pagination: Option<Pagination>,
+    pub(crate) distinct: Option<Vec<String>>,
+    #[builder(default)]
+    pub(crate) reverse: bool,
+    #[builder(default)]
+    pub(crate) nested: BTreeMap<String, InMemoryOps>,
+    pub(crate) linking_fields: Option<Vec<String>>,
+}
+
+impl InMemoryOps {
+    pub fn is_empty(&self) -> bool {
+        self.is_empty_toplevel() && self.nested.is_empty()
+    }
+
+    pub fn is_empty_toplevel(&self) -> bool {
+        self.pagination.is_none() && self.distinct.is_none() && !self.reverse
+    }
+
+    pub fn into_expression(self, inner: Expression) -> Expression {
+        if self.is_empty() {
+            inner
+        } else {
+            Expression::Process {
+                expr: inner.into(),
+                operations: self,
+            }
+        }
+    }
+}
+
+impl From<Pagination> for InMemoryOps {
+    fn from(pagination: Pagination) -> Self {
+        Self::builder().pagination(pagination).build()
     }
 }
 
@@ -266,7 +373,7 @@ impl ExpressionType {
     pub fn from_value_type(value_type: PrismaValueType) -> Self {
         match value_type {
             PrismaValueType::Any => ExpressionType::Dynamic,
-            PrismaValueType::Array(inner) => ExpressionType::List(Box::new(ExpressionType::from_value_type(*inner))),
+            PrismaValueType::List(inner) => ExpressionType::List(Box::new(ExpressionType::from_value_type(*inner))),
             PrismaValueType::Object => ExpressionType::Record,
             _ => ExpressionType::Scalar,
         }
@@ -306,7 +413,6 @@ impl Expression {
             Expression::GetFirstNonEmpty { .. } => ExpressionType::Dynamic,
             Expression::Query(_) => ExpressionType::List(Box::new(ExpressionType::Record)),
             Expression::Execute(_) => ExpressionType::Scalar,
-            Expression::Reverse(expression) => expression.r#type(),
             Expression::Sum(_) => ExpressionType::Scalar,
             Expression::Concat(vec) => ExpressionType::List(Box::new(
                 vec.iter().last().map_or(ExpressionType::Scalar, Expression::r#type),
@@ -332,9 +438,8 @@ impl Expression {
             }
             Expression::Unit => ExpressionType::Unit,
             Expression::Diff { from, .. } => from.r#type(),
-            Expression::DistinctBy { expr, .. } => expr.r#type(),
-            Expression::Paginate { expr, .. } => expr.r#type(),
             Expression::InitializeRecord { .. } | Expression::MapRecord { .. } => ExpressionType::Record,
+            Expression::Process { expr, .. } => expr.r#type(),
         }
     }
 
@@ -352,11 +457,4 @@ impl std::fmt::Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.pretty_print(false, 80).map_err(|_| std::fmt::Error)?.fmt(f)
     }
-}
-
-fn serialize_tagged_value<S>(obj: &PrismaValue, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    TaggedPrismaValue::from(obj).serialize(serializer)
 }

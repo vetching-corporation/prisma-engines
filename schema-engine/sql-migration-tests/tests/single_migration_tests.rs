@@ -1,11 +1,11 @@
 use schema_core::{
-    json_rpc::types::SchemasContainer,
+    json_rpc::types::{SchemaFilter, SchemasContainer},
     schema_connector::{ConnectorParams, SchemaConnector},
 };
 use sql_migration_tests::test_api::*;
 use sql_schema_connector::SqlSchemaConnector;
 use std::{fs, io::Write as _, path, sync::Arc};
-use test_setup::{runtime::run_with_thread_local_runtime as tok, TestApiArgs};
+use test_setup::{TestApiArgs, runtime::run_with_thread_local_runtime as tok};
 
 const TESTS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/single_migration_tests");
 
@@ -25,11 +25,7 @@ fn run_single_migration_test(test_file_path: &str, test_function_name: &'static 
                 // ... if there's enough left of the file to look ahead
                 text.get(idx + 1..idx + EXPECTATION_TEXT.len() + 1).and_then(|t| {
                     // ... and that text matches the delimiter
-                    if t == EXPECTATION_TEXT {
-                        Some(idx + 1)
-                    } else {
-                        None
-                    }
+                    if t == EXPECTATION_TEXT { Some(idx + 1) } else { None }
                 })
             })
     };
@@ -84,7 +80,7 @@ fn run_single_migration_test(test_file_path: &str, test_function_name: &'static 
             shadow_database_connection_string: None,
         };
         let mut conn = SqlSchemaConnector::new_mysql(params).unwrap();
-        tok(conn.reset(false, None)).unwrap();
+        tok(conn.reset(false, None, &SchemaFilter::default().into())).unwrap();
         test_api_args.database_url().to_owned()
     } else if tags.contains(Tags::Mysql) {
         let (_, connection_string) = tok(test_api_args.create_mysql_database());
@@ -112,6 +108,7 @@ fn run_single_migration_test(test_file_path: &str, test_function_name: &'static 
                 content: text.to_string(),
             }],
         }),
+        filters: SchemaFilter::default(),
     }))
     .unwrap();
 
@@ -140,6 +137,7 @@ fn run_single_migration_test(test_file_path: &str, test_function_name: &'static 
                 content: text.to_string(),
             }],
         }),
+        filters: SchemaFilter::default(),
     }))
     .unwrap();
 

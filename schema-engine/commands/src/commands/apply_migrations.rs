@@ -2,7 +2,7 @@ use crate::{CoreError, CoreResult, json_rpc::types::*};
 use crosstarget_utils::time::ElapsedTimeCounter;
 use schema_connector::{
     ConnectorError, MigrationRecord, Namespaces, PersistenceNotInitializedError, SchemaConnector,
-    migrations_directory::{MigrationDirectory, error_on_changed_provider, list_migrations},
+    migrations_directory::{MigrationDirectory, Migrations, error_on_changed_provider},
 };
 use tracing::Instrument;
 use user_facing_errors::schema_engine::FoundFailedMigrations;
@@ -15,10 +15,13 @@ pub async fn apply_migrations(
     let start = ElapsedTimeCounter::start();
 
     error_on_changed_provider(&input.migrations_list.lockfile, connector.connector_type())?;
-    let migrations_from_filesystem = list_migrations(input.migrations_list.migration_directories);
+    let migrations_from_filesystem = Migrations::from_migration_list(&input.migrations_list);
 
     connector.acquire_lock().await?;
-    connector.migration_persistence().initialize(namespaces).await?;
+    connector
+        .migration_persistence()
+        .initialize(namespaces, input.filters.into())
+        .await?;
 
     let migrations_from_database = connector
         .migration_persistence()
@@ -31,6 +34,7 @@ pub async fn apply_migrations(
     // We are now on the Happy Path™.
     tracing::debug!("Migration history is OK, applying unapplied migrations.");
     let unapplied_migrations: Vec<&MigrationDirectory> = migrations_from_filesystem
+        .migration_directories
         .iter()
         .filter(|fs_migration| {
             !migrations_from_database

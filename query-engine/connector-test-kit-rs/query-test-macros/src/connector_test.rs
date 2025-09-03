@@ -1,10 +1,10 @@
 use super::*;
 use crate::ensure_db_names::UNIQUE_TEST_DATABASE_NAMES;
-use darling::{ast::NestedMeta, FromMeta};
+use darling::{FromMeta, ast::NestedMeta};
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 pub fn connector_test_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
     let attributes_meta = match NestedMeta::parse_meta_list(attr.into()) {
@@ -22,6 +22,7 @@ pub fn connector_test_impl(attr: TokenStream, input: TokenStream) -> TokenStream
     };
 
     let excluded_features = args.exclude_features.features();
+    let only_executors = args.only_executors.as_ref();
     let excluded_executors = args.exclude_executors.as_ref();
     let db_schemas = args.db_schemas.schemas();
     let db_extensions = args.db_extensions.extensions();
@@ -82,6 +83,7 @@ pub fn connector_test_impl(attr: TokenStream, input: TokenStream) -> TokenStream
                 &[#exclude],
                 enumflags2::make_bitflags!(ConnectorCapability::{#(#capabilities)|*}),
                 &[#(#excluded_features),*],
+                &[#(#only_executors),*],
                 &[#(#excluded_executors),*],
                 #handler,
                 &[#(#db_schemas),*],

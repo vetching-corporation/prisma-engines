@@ -12,17 +12,17 @@ use enumflags2::BitFlags;
 use indoc::indoc;
 use psl::PreviewFeature;
 use quaint::{
-    connector::{is_url_localhost, PostgresUrl, PostgresWebSocketUrl},
     Value,
+    connector::{DEFAULT_POSTGRES_SCHEMA, PostgresUrl, PostgresWebSocketUrl, is_url_localhost},
 };
 use renderer::PostgresRenderer;
 use schema_calculator::PostgresSchemaCalculatorFlavour;
 use schema_connector::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorError, ConnectorResult, Namespaces,
+    BoxFuture, ConnectorError, ConnectorResult, Namespaces, SchemaFilter, migrations_directory::Migrations,
 };
 use schema_differ::PostgresSchemaDifferFlavour;
 use serde::Deserialize;
-use sql_schema_describer::{postgres::PostgresSchemaExt, SqlSchema};
+use sql_schema_describer::{SqlSchema, postgres::PostgresSchemaExt};
 use std::{
     borrow::Cow,
     future::{self, Future},
@@ -245,6 +245,10 @@ impl SqlDialect for PostgresDialect {
         schema
     }
 
+    fn default_namespace(&self) -> Option<&str> {
+        Some(DEFAULT_POSTGRES_SCHEMA)
+    }
+
     #[cfg(feature = "postgresql-native")]
     fn connect_to_shadow_db(
         &self,
@@ -391,7 +395,11 @@ impl SqlConnector for PostgresConnector {
         }
     }
 
-    fn table_names(&mut self, namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
+    fn table_names(
+        &mut self,
+        namespaces: Option<Namespaces>,
+        filters: SchemaFilter,
+    ) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
         Box::pin(async move {
             let search_path = self.schema_name().to_string();
 
@@ -402,7 +410,7 @@ impl SqlConnector for PostgresConnector {
             namespaces.push(Value::text(search_path));
 
             let select = r#"
-                SELECT tbl.relname AS table_name
+                SELECT tbl.relname AS table_name, namespace.nspname AS table_namespace
                 FROM pg_class AS tbl
                 INNER JOIN pg_namespace AS namespace ON namespace.oid = tbl.relnamespace
                 WHERE tbl.relkind = 'r' AND namespace.nspname = ANY ( $1 )
@@ -412,7 +420,19 @@ impl SqlConnector for PostgresConnector {
 
             let table_names: Vec<String> = rows
                 .into_iter()
-                .flat_map(|row| row.get("table_name").and_then(|s| s.to_string()))
+                .flat_map(|row| {
+                    let ns = row.get("table_namespace").and_then(|s| s.to_string());
+                    let table_name = row.get("table_name").and_then(|s| s.to_string());
+
+                    ns.and_then(|ns| table_name.map(|table_name| (ns, table_name)))
+                })
+                .filter(|(ns, table_name)| {
+                    !self
+                        .dialect()
+                        .schema_differ()
+                        .contains_table(&filters.external_tables, Some(ns), table_name)
+                })
+                .map(|(_, table_name)| table_name)
                 .collect();
 
             Ok(table_names)
@@ -569,8 +589,9 @@ impl SqlConnector for PostgresConnector {
     #[tracing::instrument(skip(self, migrations))]
     fn sql_schema_from_migration_history<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         external_shadow_db: UsingExternalShadowDb,
     ) -> BoxFuture<'a, ConnectorResult<SqlSchema>> {
         Box::pin(imp::shadow_db::sql_schema_from_migration_history(
@@ -578,6 +599,7 @@ impl SqlConnector for PostgresConnector {
             self.provider,
             migrations,
             namespaces,
+            filter,
             external_shadow_db,
         ))
     }
@@ -590,6 +612,10 @@ impl SqlConnector for PostgresConnector {
 
     fn search_path(&self) -> &str {
         self.schema_name()
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        Some(self.schema_name())
     }
 
     fn dispose(&mut self) -> BoxFuture<'_, ConnectorResult<()>> {
@@ -608,7 +634,7 @@ async fn describe_schema_with(
     namespaces: Option<Namespaces>,
     schema: String,
 ) -> ConnectorResult<SqlSchema> {
-    use sql_schema_describer::{postgres as describer, DescriberErrorKind, SqlSchemaDescriberBackend};
+    use sql_schema_describer::{DescriberErrorKind, SqlSchemaDescriberBackend, postgres as describer};
 
     let mut describer_circumstances: BitFlags<describer::Circumstances> = Default::default();
 
@@ -640,7 +666,6 @@ async fn describe_schema_with(
                 }
             })?;
 
-    crate::flavour::normalize_sql_schema(&mut schema, preview_features);
     normalize_sql_schema(&mut schema, preview_features);
 
     Ok(schema)
@@ -650,7 +675,7 @@ async fn sql_schema_from_migrations_and_db(
     conn: &imp::Connection,
     params: &imp::Params,
     schema: String,
-    migrations: &[MigrationDirectory],
+    migrations: &Migrations,
     namespaces: Option<Namespaces>,
     circumstances: BitFlags<Circumstances>,
     preview_features: BitFlags<PreviewFeature>,
@@ -664,7 +689,13 @@ async fn sql_schema_from_migrations_and_db(
         conn.raw_cmd("BEGIN;").await.map_err(imp::quaint_error_mapper(params))?;
     }
 
-    for migration in migrations {
+    if !migrations.shadow_db_init_script.trim().is_empty() {
+        conn.raw_cmd(&migrations.shadow_db_init_script)
+            .await
+            .map_err(imp::quaint_error_mapper(params))?;
+    }
+
+    for migration in migrations.migration_directories.iter() {
         let script = migration.read_migration_script()?;
 
         tracing::debug!(

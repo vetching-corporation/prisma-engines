@@ -4,19 +4,23 @@ mod renderer;
 mod schema_calculator;
 mod schema_differ;
 
-use crate::{sql_destructive_change_checker, sql_renderer::SqlRenderer, SqlConnector};
+use crate::{SqlConnector, sql_destructive_change_checker, sql_renderer::SqlRenderer};
 use connection_string::JdbcString;
 #[cfg(feature = "mssql-native")]
-use connector::{generic_apply_migration_script, shadow_db, Connection};
+use connector::{Connection, generic_apply_migration_script, shadow_db};
 #[cfg(not(feature = "mssql-native"))]
-use connector::{generic_apply_migration_script, shadow_db, Connection};
+use connector::{Connection, generic_apply_migration_script, shadow_db};
 use destructive_change_checker::MssqlDestructiveChangeCheckerFlavour;
 use indoc::formatdoc;
-use quaint::{connector::MssqlUrl, prelude::Table};
+use quaint::{
+    connector::{DEFAULT_MSSQL_SCHEMA, MssqlUrl},
+    prelude::Table,
+};
 use renderer::MssqlRenderer;
 use schema_calculator::MssqlSchemaCalculatorFlavour;
 use schema_connector::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorError, ConnectorParams, ConnectorResult, Namespaces,
+    BoxFuture, ConnectorError, ConnectorParams, ConnectorResult, Namespaces, SchemaFilter,
+    migrations_directory::Migrations,
 };
 use schema_differ::MssqlSchemaDifferFlavour;
 use sql_schema_describer::SqlSchema;
@@ -98,6 +102,10 @@ impl SqlDialect for MssqlDialect {
         let mut schema = SqlSchema::default();
         schema.set_connector_data(Box::<sql_schema_describer::mssql::MssqlSchemaExt>::default());
         schema
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        Some(DEFAULT_MSSQL_SCHEMA)
     }
 
     #[cfg(feature = "mssql-native")]
@@ -279,7 +287,11 @@ impl SqlConnector for MssqlConnector {
         })
     }
 
-    fn table_names(&mut self, namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
+    fn table_names(
+        &mut self,
+        namespaces: Option<Namespaces>,
+        filters: SchemaFilter,
+    ) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
         Box::pin(async move {
             let search_path = self.schema_name().to_string();
 
@@ -305,7 +317,14 @@ impl SqlConnector for MssqlConnector {
 
                     ns.and_then(|ns| table_name.map(|table_name| (ns, table_name)))
                 })
-                .filter(|(ns, _)| namespaces.contains(ns))
+                .filter(|(ns, table_name)| {
+                    namespaces.contains(ns)
+                        && !self.dialect().schema_differ().contains_table(
+                            &filters.external_tables,
+                            Some(ns),
+                            table_name,
+                        )
+                })
                 .map(|(_, table_name)| table_name)
                 .collect();
 
@@ -487,8 +506,9 @@ impl SqlConnector for MssqlConnector {
 
     fn sql_schema_from_migration_history<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         namespaces: Option<Namespaces>,
+        filter: &'a SchemaFilter,
         external_shadow_db: UsingExternalShadowDb,
     ) -> BoxFuture<'a, ConnectorResult<SqlSchema>> {
         match external_shadow_db {
@@ -497,7 +517,7 @@ impl SqlConnector for MssqlConnector {
                 tracing::info!("Connected to an external shadow database.");
 
                 if self.reset(namespaces.clone()).await.is_err() {
-                    crate::best_effort_reset(self, namespaces.clone()).await?;
+                    crate::best_effort_reset(self, namespaces.clone(), filter).await?;
                 }
 
                 shadow_db::sql_schema_from_migrations_history(migrations, self, namespaces).await
@@ -535,13 +555,13 @@ impl SqlConnector for MssqlConnector {
                         ConnectorParams::new(jdbc_string.to_string(), params.connector_params.preview_features, None);
                     let mut shadow_database = MssqlConnector::new_with_params(connector_params.clone())?;
 
-                    if let Some(schema) = jdbc_string.properties().get("schema") {
-                        if schema != DEFAULT_SCHEMA_NAME {
-                            shadow_database
-                                .raw_cmd(&format!("CREATE SCHEMA [{schema}]"))
-                                .await
-                                .map_err(|err| err.into_shadow_db_creation_error())?;
-                        }
+                    if let Some(schema) = jdbc_string.properties().get("schema")
+                        && schema != DEFAULT_SCHEMA_NAME
+                    {
+                        shadow_database
+                            .raw_cmd(&format!("CREATE SCHEMA [{schema}]"))
+                            .await
+                            .map_err(|err| err.into_shadow_db_creation_error())?;
                     }
 
                     // We go through the whole process without early return, then clean up
@@ -570,6 +590,10 @@ impl SqlConnector for MssqlConnector {
 
     fn search_path(&self) -> &str {
         self.schema_name()
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        Some(self.schema_name())
     }
 
     fn describe_query<'a>(

@@ -1,8 +1,8 @@
 use crate::{constants::*, output_meta, query_builder::MongoReadQueryBuilder, value::value_from_bson};
 
 use connector_interface::*;
-use mongodb::{bson::Document, ClientSession, Database};
-use query_structure::{prelude::*, AggregationSelection, Filter, QueryArguments};
+use mongodb::{ClientSession, Database, bson::Document};
+use query_structure::{AggregationSelection, Filter, QueryArguments, prelude::*};
 
 pub async fn aggregate(
     database: &Database,
@@ -100,7 +100,7 @@ fn to_aggregation_rows(
                 }
                 AggregationSelection::Count { all, fields } => {
                     if all.is_some() {
-                        let meta = selection_meta.get("all").unwrap();
+                        let meta = selection_meta.get("_all").unwrap();
                         let field_val = value_from_bson(doc.remove("count_all").unwrap(), meta)?;
 
                         row.push(AggregationResult::Count(None, field_val));

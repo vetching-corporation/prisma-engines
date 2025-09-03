@@ -38,12 +38,12 @@ impl<'a> Postgres<'a> {
     }
 
     fn visit_returning(&mut self, returning: Option<Vec<Column<'a>>>) -> visitor::Result {
-        if let Some(returning) = returning {
-            if !returning.is_empty() {
-                let values = returning.into_iter().map(|r| r.into()).collect();
-                self.write(" RETURNING ")?;
-                self.visit_columns(values)?;
-            }
+        if let Some(returning) = returning
+            && !returning.is_empty()
+        {
+            let values = returning.into_iter().map(|r| r.into()).collect();
+            self.write(" RETURNING ")?;
+            self.visit_columns(values)?;
         }
         Ok(())
     }
@@ -1324,7 +1324,10 @@ mod tests {
         let q = Select::from_table(joined_table).and_from("Toto");
         let (sql, _) = Postgres::build(q).unwrap();
 
-        assert_eq!("SELECT \"User\".*, \"Toto\".* FROM \"User\" LEFT JOIN \"Post\" AS \"p\" ON \"p\".\"userId\" = \"User\".\"id\", \"Toto\"", sql);
+        assert_eq!(
+            "SELECT \"User\".*, \"Toto\".* FROM \"User\" LEFT JOIN \"Post\" AS \"p\" ON \"p\".\"userId\" = \"User\".\"id\", \"Toto\"",
+            sql
+        );
     }
 
     #[test]

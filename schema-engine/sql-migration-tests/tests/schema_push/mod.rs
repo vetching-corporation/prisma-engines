@@ -1,6 +1,7 @@
 mod views;
 
 use indoc::indoc;
+use schema_core::json_rpc::types::SchemaFilter;
 use sql_migration_tests::test_api::*;
 use sql_schema_describer::ColumnTypeFamily;
 
@@ -454,4 +455,57 @@ fn issue_repro_extended_indexes(api: TestApi) {
 
     api.schema_push_w_datasource(dm).send().assert_executable();
     api.schema_push_w_datasource(dm).send().assert_green().assert_no_steps();
+}
+
+#[test_connector]
+fn schema_push_with_schema_filters(api: TestApi) {
+    let dm = r#"
+    model Cat {
+        id Int @id
+    }
+
+    model ExternalTable {
+        id Int @id        
+    }
+    "#;
+
+    api.schema_push_with_filter(dm, api.namespaced_schema_filter(&["ExternalTable"]))
+        .send()
+        .assert_green()
+        .assert_has_executed_steps();
+
+    api.assert_schema()
+        .assert_has_table("Cat")
+        .assert_has_no_table("ExternalTable");
+}
+
+#[test_connector]
+fn schema_push_with_invalid_schema_filters(api: TestApi) {
+    let dm = r#"
+    model Cat {
+        id Int @id
+    }
+
+    model ExternalTable {
+        id Int @id        
+    }
+    "#;
+
+    let (expected_error_code, table_name) = if api.is_postgres() || api.is_mssql() {
+        ("P3023", "ExternalTable")
+    } else {
+        ("P3024", "public.ExternalTable")
+    };
+
+    let err = api
+        .schema_push_with_filter(
+            dm,
+            SchemaFilter {
+                external_tables: vec![table_name.to_string()],
+                external_enums: vec![],
+            },
+        )
+        .send_unwrap_err();
+
+    assert_eq!(err.error_code(), Some(expected_error_code));
 }

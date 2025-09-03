@@ -5,19 +5,19 @@ pub(super) use sql_schema_calculator_flavour::SqlSchemaCalculatorFlavour;
 
 use crate::SqlDatabaseSchema;
 use psl::{
+    ValidatedSchema,
     datamodel_connector::walker_ext_traits::*,
     parser_database::{
-        self as db, ast,
+        self as db, ReferentialAction, ScalarFieldType, ScalarType, SortOrder, ast,
         walkers::{ModelWalker, ScalarFieldWalker},
-        ReferentialAction, ScalarFieldType, ScalarType, SortOrder,
     },
-    ValidatedSchema,
 };
 use sql_schema_describer::{self as sql, PrismaValue, SqlSchema};
 use std::collections::HashMap;
 
 pub(crate) fn calculate_sql_schema(
     datamodel: &ValidatedSchema,
+    default_namespace: Option<&str>,
     flavour: &dyn SqlSchemaCalculatorFlavour,
 ) -> SqlDatabaseSchema {
     let mut schema = SqlDatabaseSchema::default();
@@ -31,13 +31,7 @@ pub(crate) fn calculate_sql_schema(
         schemas: Default::default(),
     };
 
-    if let Some(ds) = context.datamodel.configuration.datasources.first() {
-        for (schema, _) in &ds.namespaces {
-            context
-                .schemas
-                .insert(schema, context.schema.describer_schema.push_namespace(schema.clone()));
-        }
-    }
+    push_namespaces(&mut context, default_namespace);
 
     flavour.calculate_enums(&mut context);
 
@@ -52,6 +46,28 @@ pub(crate) fn calculate_sql_schema(
     flavour.push_connector_data(&mut context);
 
     schema
+}
+
+fn push_namespaces<'a>(ctx: &mut Context<'a>, default_namespace: Option<&'a str>) {
+    // We either use the explicit namespaces from the datamodel
+    if let Some(ds) = ctx.datamodel.configuration.datasources.first() {
+        for (schema, _) in ds.namespaces.iter() {
+            ctx.schemas
+                .insert(schema, ctx.schema.describer_schema.push_namespace(schema.clone()));
+        }
+    }
+
+    // or the default namespace from the connector. But not mix both!
+    if ctx.schemas.is_empty()
+        && let Some(default_namespace) = default_namespace
+    {
+        ctx.schemas.insert(
+            default_namespace,
+            ctx.schema
+                .describer_schema
+                .push_namespace(default_namespace.to_string()),
+        );
+    }
 }
 
 fn push_model_tables(ctx: &mut Context<'_>) {

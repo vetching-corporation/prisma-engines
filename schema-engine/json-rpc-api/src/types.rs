@@ -37,6 +37,9 @@ pub struct MigrationList {
     /// Description of the lockfile, which may or may not exist.
     pub lockfile: MigrationLockfile,
 
+    /// An init script that will be run on the shadow database before the migrations are applied. Can be a no-op.
+    pub shadow_db_init_script: String,
+
     /// List of migration directories.
     pub migration_directories: Vec<MigrationDirectory>,
 }
@@ -83,6 +86,18 @@ pub struct SchemasWithConfigDir {
 
     /// An optional directory containing the config files such as SSL certificates.
     pub config_dir: String,
+}
+
+/// Configuration of entities in the schema/database to be included or excluded from an operation.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[cfg_attr(target_arch = "wasm32", derive(Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(missing_as_null, from_wasm_abi, into_wasm_abi))]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaFilter {
+    /// Tables that shall be considered 'externally" managed. As per prisma.config.ts > tables.external.
+    pub external_tables: Vec<String>,
+    /// Enums that shall be considered "externally" managed. As per prisma.config.ts > enums.external.
+    pub external_enums: Vec<String>,
 }
 
 /// The path to a live database taken as input. For flexibility, this can be Prisma schemas as strings, or only the
@@ -217,6 +232,9 @@ pub struct DevActionReset {
 pub struct ApplyMigrationsInput {
     /// The list of migrations, already loaded from disk.
     pub migrations_list: MigrationList,
+
+    /// The schema filter to use during the apply migrations.
+    pub filters: SchemaFilter,
 }
 
 /// The output of the `applyMigrations` command.
@@ -269,6 +287,9 @@ pub struct CreateMigrationInput {
 
     /// The Prisma schema content to use as a target for the generated migration.
     pub schema: SchemasContainer,
+
+    /// Entities to be included or excluded from the migration.
+    pub filters: SchemaFilter,
 }
 
 /// The output of the `createMigration` command.
@@ -340,6 +361,9 @@ pub struct DebugPanicOutput {}
 pub struct DevDiagnosticInput {
     /// The list of migrations, already loaded from disk.
     pub migrations_list: MigrationList,
+
+    /// The schema filter to use during checks on the database.
+    pub filters: SchemaFilter,
 }
 
 /// The response type for `devDiagnostic`.
@@ -364,6 +388,10 @@ pub struct DiagnoseMigrationHistoryInput {
 
     /// Whether creating a shadow database is allowed.
     pub opt_in_to_shadow_database: bool,
+
+    /// The schema filter to use during checks on the database.
+    /// Note: Only used if opt_in_to_shadow_database is true.
+    pub filters: SchemaFilter,
 }
 
 /// The result type for `diagnoseMigrationHistory` responses.
@@ -421,6 +449,9 @@ pub struct DiffParams {
     /// If this is set, the engine will return exitCode = 2 in the diffResult in case the diff is
     /// non-empty. Other than this, it does not change the behaviour of the command.
     pub exit_code: Option<bool>,
+
+    /// The schema filter to use during the diff.
+    pub filters: SchemaFilter,
 }
 
 /// The result type for the `diff` method.
@@ -597,6 +628,8 @@ pub struct EvaluateDataLossInput {
     pub migrations_list: MigrationList,
     /// The prisma schema files to migrate to.
     pub schema: SchemasContainer,
+    /// Entities to be included or excluded during the data loss evaluation.
+    pub filters: SchemaFilter,
 }
 
 /// The output of the `evaluateDataLoss` command.
@@ -701,7 +734,10 @@ pub struct MarkMigrationRolledBackOutput {}
 #[derive(Debug, Deserialize)]
 #[cfg_attr(target_arch = "wasm32", derive(Tsify))]
 #[cfg_attr(target_arch = "wasm32", tsify(missing_as_null, from_wasm_abi))]
-pub struct ResetInput {}
+pub struct ResetInput {
+    /// The schema filter to use during the reset. Only relevant during "soft" resets though - usually we try to drop the whole database.
+    pub filter: SchemaFilter,
+}
 
 /// The output of the `reset` command.
 #[derive(Debug, Serialize)]
@@ -721,6 +757,9 @@ pub struct SchemaPushInput {
 
     /// The Prisma schema files.
     pub schema: SchemasContainer,
+
+    /// The schema filter to use during the push.
+    pub filters: SchemaFilter,
 }
 
 /// Response result for the `schemaPush` method.

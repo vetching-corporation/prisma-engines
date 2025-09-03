@@ -7,9 +7,9 @@ use prisma_value::PrismaValueType;
 pub use relation::*;
 pub use scalar::*;
 
-use crate::{parent_container::ParentContainer, Model, NativeTypeInstance, Zipper};
+use crate::{Model, NativeTypeInstance, Zipper, parent_container::ParentContainer};
 use psl::{
-    parser_database::{walkers, EnumId, ScalarType},
+    parser_database::{EnumId, ScalarType, walkers},
     schema_ast::ast::FieldArity,
 };
 use std::{borrow::Cow, hash::Hash};
@@ -32,17 +32,17 @@ impl Field {
 
     pub fn name(&self) -> &str {
         match self {
-            Field::Scalar(ref sf) => sf.name(),
-            Field::Relation(ref rf) => rf.walker().name(),
-            Field::Composite(ref cf) => cf.name(),
+            Field::Scalar(sf) => sf.name(),
+            Field::Relation(rf) => rf.walker().name(),
+            Field::Composite(cf) => cf.name(),
         }
     }
 
     pub fn db_name(&self) -> &str {
         match self {
-            Field::Scalar(ref sf) => sf.db_name(),
+            Field::Scalar(sf) => sf.db_name(),
             Field::Relation(rf) => rf.name(),
-            Field::Composite(ref cf) => cf.db_name(),
+            Field::Composite(cf) => cf.db_name(),
         }
     }
 
@@ -75,23 +75,23 @@ impl Field {
 
     pub fn is_list(&self) -> bool {
         match self {
-            Field::Scalar(ref sf) => sf.is_list(),
-            Field::Relation(ref rf) => rf.is_list(),
-            Field::Composite(ref cf) => cf.is_list(),
+            Field::Scalar(sf) => sf.is_list(),
+            Field::Relation(rf) => rf.is_list(),
+            Field::Composite(cf) => cf.is_list(),
         }
     }
 
     pub fn is_required(&self) -> bool {
         match self {
-            Field::Scalar(ref sf) => sf.is_required(),
-            Field::Relation(ref rf) => rf.is_required(),
-            Field::Composite(ref cf) => cf.is_required(),
+            Field::Scalar(sf) => sf.is_required(),
+            Field::Relation(rf) => rf.is_required(),
+            Field::Composite(cf) => cf.is_required(),
         }
     }
 
     pub fn is_unique(&self) -> bool {
         match self {
-            Field::Scalar(ref sf) => sf.unique(),
+            Field::Scalar(sf) => sf.unique(),
             Field::Relation(_) => false,
             Field::Composite(_) => false,
         }
@@ -114,19 +114,11 @@ impl Field {
     }
 
     pub fn as_composite(&self) -> Option<&CompositeFieldRef> {
-        if let Self::Composite(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Composite(v) = self { Some(v) } else { None }
     }
 
     pub fn as_scalar(&self) -> Option<&ScalarFieldRef> {
-        if let Self::Scalar(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Scalar(v) = self { Some(v) } else { None }
     }
 
     pub fn related_container(&self) -> ParentContainer {
@@ -203,12 +195,12 @@ impl Type {
             TypeIdentifier::Int => PrismaValueType::Int,
             TypeIdentifier::BigInt => PrismaValueType::BigInt,
             TypeIdentifier::Float => PrismaValueType::Float,
-            TypeIdentifier::Decimal => PrismaValueType::Decimal,
+            TypeIdentifier::Decimal => PrismaValueType::Float,
             TypeIdentifier::Boolean => PrismaValueType::Boolean,
-            TypeIdentifier::Enum(id) => PrismaValueType::Enum(self.dm.walk(id).name().to_owned()),
+            TypeIdentifier::Enum(_) => PrismaValueType::Enum,
             TypeIdentifier::UUID => PrismaValueType::String,
-            TypeIdentifier::Json => PrismaValueType::Object,
-            TypeIdentifier::DateTime => PrismaValueType::Date,
+            TypeIdentifier::Json => PrismaValueType::Json,
+            TypeIdentifier::DateTime => PrismaValueType::DateTime,
             TypeIdentifier::Bytes => PrismaValueType::Bytes,
             TypeIdentifier::Unsupported => PrismaValueType::Any,
         }
@@ -306,16 +298,9 @@ impl FieldTypeInformation {
     }
 
     pub fn to_prisma_type(&self) -> PrismaValueType {
-        let type_ = match (self.typ.id, self.native_type.as_ref()) {
-            (TypeIdentifier::DateTime, Some(native_type))
-                if native_type.name() == "Time" || native_type.name() == "Timetz" =>
-            {
-                PrismaValueType::Time
-            }
-            _ => self.typ.to_prisma_type(),
-        };
+        let type_ = self.typ.to_prisma_type();
         if self.arity.is_list() {
-            PrismaValueType::Array(Box::new(type_))
+            PrismaValueType::List(Box::new(type_))
         } else {
             type_
         }

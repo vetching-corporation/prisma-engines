@@ -9,7 +9,7 @@ use crate::{
         NativeTypeInstance, RelationMode,
     },
     diagnostics::{Diagnostics, Span},
-    parser_database::{walkers::*, ReferentialAction, ScalarType},
+    parser_database::{ReferentialAction, ScalarType, walkers::*},
 };
 use enumflags2::BitFlags;
 use mongodb_types::*;
@@ -81,6 +81,12 @@ impl Connector for MongoDbDatamodelConnector {
         for index in model.indexes() {
             validations::index_is_not_defined_multiple_times_to_same_fields(index, errors);
             validations::unique_cannot_be_defined_to_id_field(index, errors);
+        }
+    }
+
+    fn validate_view(&self, model: ModelWalker<'_>, errors: &mut Diagnostics) {
+        for field in model.scalar_fields() {
+            validations::field_name_uses_valid_characters(field, errors);
         }
     }
 

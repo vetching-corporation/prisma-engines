@@ -10,13 +10,11 @@ use crate::{
     },
     diagnostics::{DatamodelError, Diagnostics},
     parser_database::{
-        self,
+        self, IndexAlgorithm, ParserDatabase, ReferentialAction, ScalarType,
         ast::{self, SchemaPosition},
         coerce,
         walkers::ModelWalker,
-        IndexAlgorithm, ParserDatabase, ReferentialAction, ScalarType,
     },
-    PreviewFeature,
 };
 use chrono::*;
 use enumflags2::BitFlags;
@@ -304,7 +302,7 @@ impl Connector for CockroachDatamodelConnector {
             None => return,
         };
 
-        if config.preview_features().contains(PreviewFeature::MultiSchema) && !ds.schemas_defined() {
+        if !ds.schemas_defined() {
             completions::schemas_completion(completion_list);
         }
     }

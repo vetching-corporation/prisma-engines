@@ -24,14 +24,15 @@ pub use self::{
     relation_mode::RelationMode,
 };
 
-use crate::{configuration::DatasourceConnectorData, Configuration, Datasource, PreviewFeature};
+use crate::{Configuration, Datasource, PreviewFeature, configuration::DatasourceConnectorData};
 use chrono::{DateTime, FixedOffset};
 use diagnostics::{DatamodelError, Diagnostics, NativeTypeErrorFactory, Span};
 use enumflags2::BitFlags;
 use lsp_types::CompletionList;
 use parser_database::{
+    IndexAlgorithm, ParserDatabase, ReferentialAction, ScalarType,
     ast::{self, SchemaPosition},
-    walkers, IndexAlgorithm, ParserDatabase, ReferentialAction, ScalarType,
+    walkers,
 };
 use std::{borrow::Cow, collections::HashMap};
 
@@ -154,6 +155,7 @@ pub trait Connector: Send + Sync {
 
     fn validate_enum(&self, _enum: walkers::EnumWalker<'_>, _: &mut Diagnostics) {}
     fn validate_model(&self, _model: walkers::ModelWalker<'_>, _: RelationMode, _: &mut Diagnostics) {}
+    fn validate_view(&self, _view: walkers::ModelWalker<'_>, _: &mut Diagnostics) {}
     fn validate_relation_field(&self, _field: walkers::RelationFieldWalker<'_>, _: &mut Diagnostics) {}
     fn validate_datasource(&self, _: BitFlags<PreviewFeature>, _: &Datasource, _: &mut Diagnostics) {}
 

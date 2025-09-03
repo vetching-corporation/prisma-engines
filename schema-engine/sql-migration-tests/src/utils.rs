@@ -66,8 +66,9 @@ pub fn list_migrations(migrations_directory_path: &Path) -> Result<MigrationList
             return Ok(MigrationList {
                 base_dir,
                 lockfile,
+                shadow_db_init_script: Default::default(),
                 migration_directories: entries,
-            })
+            });
         }
         Err(err) => return Err(err.into()),
     };
@@ -102,6 +103,7 @@ pub fn list_migrations(migrations_directory_path: &Path) -> Result<MigrationList
     Ok(MigrationList {
         base_dir,
         lockfile,
+        shadow_db_init_script: Default::default(),
         migration_directories: entries,
     })
 }

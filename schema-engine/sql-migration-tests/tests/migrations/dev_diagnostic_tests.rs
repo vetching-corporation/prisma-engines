@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use schema_core::{json_rpc::types::*, schema_api};
 use sql_migration_tests::{test_api::*, utils::list_migrations};
 use std::io::Write;
-use user_facing_errors::{schema_engine::MigrationDoesNotApplyCleanly, UserFacingError};
+use user_facing_errors::{UserFacingError, schema_engine::MigrationDoesNotApplyCleanly};
 
 trait DevActionExt {
     fn is_create_migration(&self) -> bool;
@@ -448,10 +448,12 @@ fn with_a_failed_migration(api: TestApi) {
 
     let DevDiagnosticOutput { action } = api.dev_diagnostic(&migrations_directory).send().into_output();
 
-    assert!(action
-        .as_reset()
-        .unwrap()
-        .contains(&format!("The migration `{generated_migration_name}` failed.")));
+    assert!(
+        action
+            .as_reset()
+            .unwrap()
+            .contains(&format!("The migration `{generated_migration_name}` failed."))
+    );
 }
 
 #[test_connector]
@@ -617,7 +619,10 @@ fn dev_diagnostic_shadow_database_creation_error_is_special_cased_mysql(api: Tes
     let err = tok(async {
         let migration_api = schema_api(Some(datamodel), None).unwrap();
         migration_api
-            .dev_diagnostic(DevDiagnosticInput { migrations_list })
+            .dev_diagnostic(DevDiagnosticInput {
+                migrations_list,
+                filters: SchemaFilter::default(),
+            })
             .await
     })
     .unwrap_err()
@@ -665,7 +670,10 @@ fn dev_diagnostic_shadow_database_creation_error_is_special_cased_postgres(api: 
     let err = tok(async move {
         let migration_api = schema_api(Some(datamodel), None).unwrap();
         migration_api
-            .dev_diagnostic(DevDiagnosticInput { migrations_list })
+            .dev_diagnostic(DevDiagnosticInput {
+                migrations_list,
+                filters: SchemaFilter::default(),
+            })
             .await
     })
     .unwrap_err()
@@ -767,12 +775,12 @@ fn dev_diagnostic_multi_schema_does_not_panic() {
         datasource db {{
             provider = "{provider}"
             url = "{url}"
-            schemas = ["prisma-tests", "auth"]
+            schemas = ["public", "auth"]
         }}
 
         generator js {{
             provider = "prisma-client-js"
-            previewFeatures = ["multiSchema"]
+            previewFeatures = []
         }}
 
         model users {{
@@ -786,7 +794,7 @@ fn dev_diagnostic_multi_schema_does_not_panic() {
           id    String @id @db.Uuid
           users users  @relation(fields: [id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-          @@schema("prisma-tests")
+          @@schema("public")
         }}
     "#};
 
@@ -801,14 +809,14 @@ CREATE TABLE auth.users (
     CONSTRAINT users_pkey PRIMARY KEY (id)
 );
 
--- "prisma-tests".profiles definition
-CREATE TABLE "prisma-tests".profiles (
+-- "public".profiles definition
+CREATE TABLE "public".profiles (
     id uuid NOT NULL,
     CONSTRAINT profiles_pkey PRIMARY KEY (id)
 );
 
--- "prisma-tests".profiles foreign keys
-ALTER TABLE "prisma-tests".profiles ADD CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id);
+-- "public".profiles foreign keys
+ALTER TABLE "public".profiles ADD CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id);
     "#;
 
     let tempdir = tempfile::tempdir().unwrap();
@@ -824,5 +832,9 @@ ALTER TABLE "prisma-tests".profiles ADD CONSTRAINT profiles_id_fkey FOREIGN KEY 
 
     let migrations_list = list_migrations(&tempdir.keep()).unwrap();
 
-    tok(api.dev_diagnostic(DevDiagnosticInput { migrations_list })).unwrap();
+    tok(api.dev_diagnostic(DevDiagnosticInput {
+        migrations_list,
+        filters: SchemaFilter::default(),
+    }))
+    .unwrap();
 }

@@ -193,19 +193,11 @@ impl Filter {
     }
 
     pub fn as_scalar(&self) -> Option<&ScalarFilter> {
-        if let Self::Scalar(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Scalar(v) = self { Some(v) } else { None }
     }
 
     pub fn into_scalar(self) -> Option<ScalarFilter> {
-        if let Self::Scalar(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+        if let Self::Scalar(v) = self { Some(v) } else { None }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -252,10 +244,10 @@ impl Filter {
                 .iter()
                 .for_each(|f| Self::filter_and_collect_scalars(f, filter_check, scalars)),
             Filter::Scalar(sf) => {
-                if filter_check(sf) {
-                    if let Some(field) = sf.scalar_ref() {
-                        scalars.push(field.to_owned())
-                    }
+                if filter_check(sf)
+                    && let Some(field) = sf.scalar_ref()
+                {
+                    scalars.push(field.to_owned())
                 }
             }
             _ => (),

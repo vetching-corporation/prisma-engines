@@ -1,5 +1,5 @@
 use super::*;
-use crate::{query_document::ParsedField, AggregateRecordsQuery, ArgumentListLookup, ParsedInputValue, ReadQuery};
+use crate::{AggregateRecordsQuery, ArgumentListLookup, ParsedInputValue, ReadQuery, query_document::ParsedField};
 use query_structure::{Filter, Model, OrderBy, ScalarFieldRef};
 use schema::constants::args;
 use std::convert::TryInto;
@@ -47,10 +47,10 @@ fn verify_selections(selectors: &[AggregationSelection], group_by: &[ScalarField
     let mut missing_fields = vec![];
 
     for selector in selectors {
-        if let AggregationSelection::Field(field) = selector {
-            if !group_by.contains(field) {
-                missing_fields.push(field.name().to_owned());
-            }
+        if let AggregationSelection::Field(field) = selector
+            && !group_by.contains(field)
+        {
+            missing_fields.push(field.name().to_owned());
         }
     }
 
@@ -71,10 +71,10 @@ fn verify_orderings(orderings: &[OrderBy], group_by: &[ScalarFieldRef]) -> Query
     let mut missing_fields = vec![];
 
     for ordering in orderings {
-        if let OrderBy::Scalar(by_scalar) = ordering {
-            if !group_by.contains(&by_scalar.field) {
-                missing_fields.push(by_scalar.field.name().to_owned());
-            }
+        if let OrderBy::Scalar(by_scalar) = ordering
+            && !group_by.contains(&by_scalar.field)
+        {
+            missing_fields.push(by_scalar.field.name().to_owned());
         }
     }
 
@@ -115,9 +115,9 @@ fn verify_having(having: Option<&Filter>, selectors: &[AggregationSelection]) ->
             Ok(())
         } else {
             Err(QueryGraphBuilderError::InputError(format!(
-                    "Every field used in `having` filters must either be an aggregation filter or be included in the selection of the query. Missing fields: {}",
-                    missing_fields.join(", ")
-                )))
+                "Every field used in `having` filters must either be an aggregation filter or be included in the selection of the query. Missing fields: {}",
+                missing_fields.join(", ")
+            )))
         }
     } else {
         Ok(())

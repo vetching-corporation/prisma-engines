@@ -1,6 +1,6 @@
 use crate::sql_renderer::{
-    format_hex, render_nullability, render_step, IteratorJoin, Quoted, QuotedWithPrefix, SqlRenderer, StepRenderer,
-    SQL_INDENTATION,
+    IteratorJoin, Quoted, QuotedWithPrefix, SQL_INDENTATION, SqlRenderer, StepRenderer, format_hex, render_nullability,
+    render_step,
 };
 use crate::{
     migration_pair::MigrationPair,
@@ -12,13 +12,13 @@ use crate::{
 };
 use psl::builtin_connectors::{CockroachType, PostgresType};
 use sql_ddl::{
-    postgres::{self as ddl, PostgresIdentifier},
     IndexColumn, SortOrder,
+    postgres::{self as ddl, PostgresIdentifier},
 };
 use sql_schema_describer::{
+    ColumnArity, ColumnTypeFamily, DefaultKind, DefaultValue, ForeignKeyAction, PrismaValue, SQLSortOrder, SqlSchema,
     postgres::{PostgresSchemaExt, SqlIndexAlgorithm},
     walkers::*,
-    ColumnArity, ColumnTypeFamily, DefaultKind, DefaultValue, ForeignKeyAction, PrismaValue, SQLSortOrder, SqlSchema,
 };
 use std::borrow::Cow;
 
@@ -395,8 +395,11 @@ impl SqlRenderer for PostgresRenderer {
         .to_string()
     }
 
-    fn render_create_namespace(&self, ns: sql_schema_describer::NamespaceWalker<'_>) -> String {
-        format!("CREATE SCHEMA IF NOT EXISTS {}", Quoted::postgres_ident(ns.name()))
+    fn render_create_namespace(&self, ns: sql_schema_describer::NamespaceWalker<'_>) -> Vec<String> {
+        vec![format!(
+            "CREATE SCHEMA IF NOT EXISTS {}",
+            Quoted::postgres_ident(ns.name())
+        )]
     }
 
     fn render_create_table(&self, table: TableWalker<'_>) -> String {

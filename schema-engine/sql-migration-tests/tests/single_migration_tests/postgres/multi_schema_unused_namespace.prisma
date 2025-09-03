@@ -9,7 +9,7 @@ datasource testds {
 
 generator js {
     provider = "prisma-client-js"
-    previewFeatures = ["multiSchema"]
+    previewFeatures = []
 }
 
 model Test {
@@ -56,9 +56,6 @@ model Test5 {
 // 
 // -- CreateSchema
 // CREATE SCHEMA IF NOT EXISTS "security";
-// 
-// -- CreateSchema
-// CREATE SCHEMA IF NOT EXISTS "unused";
 // 
 // -- CreateSchema
 // CREATE SCHEMA IF NOT EXISTS "users";

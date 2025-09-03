@@ -32,13 +32,15 @@ members = [
     "query-compiler/query-compiler",
     "query-compiler/query-compiler-playground",
     "query-compiler/query-compiler-wasm",
-    "query-compiler/query-engine-tests-todo",
     "libs/*",
     "prisma-fmt",
     "prisma-schema-wasm",
     "psl/*",
     "quaint",
 ]
+
+[workspace.package]
+edition = "2024"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
@@ -110,7 +112,7 @@ paste = "1"
 percent-encoding = "2"
 pest = "2"
 pest_derive = "2"
-petgraph = "0.4"
+petgraph = "0.8"
 pin-project = "1"
 postgres-native-tls = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
 postgres-types = { git = "https://github.com/prisma/rust-postgres", branch = "pgbouncer-mode" }
@@ -161,7 +163,7 @@ wasm-bindgen-futures = "0.4"
 wasm-logger = "0.2"
 
 # build dependencies
-cbindgen = "0.24"
+cbindgen = "0.29"
 cfg_aliases = "0.2"
 darling = "0.20"
 napi-build = "1"

@@ -7,11 +7,11 @@ use crate::{
     json_rpc::types::{DiffParams, DiffResult, DiffTarget, UrlContainer},
 };
 use enumflags2::BitFlags;
-use json_rpc::types::MigrationList;
 use psl::SourceFile;
 use quaint::connector::ExternalConnectorFactory;
 use schema_connector::{
-    ConnectorError, DatabaseSchema, ExternalShadowDatabase, Namespaces, SchemaConnector, SchemaDialect,
+    ConnectorError, DatabaseSchema, ExternalShadowDatabase, Namespaces, SchemaConnector, SchemaDialect, SchemaFilter,
+    migrations_directory::Migrations,
 };
 
 pub async fn diff(
@@ -25,20 +25,30 @@ pub async fn diff(
     let (namespaces, preview_features) =
         namespaces_and_preview_features_from_diff_targets(&[&params.from, &params.to])?;
 
+    let filter: SchemaFilter = params.filters.into();
+    filter.validate(&*connector.schema_dialect())?;
+
     let (conn_from, schema_from) = diff_target_to_dialect(
         &params.from,
         connector,
         adapter_factory.clone(),
         namespaces.clone(),
+        &filter,
         preview_features,
     )
     .await?
     .unzip();
 
-    let (conn_to, schema_to) =
-        diff_target_to_dialect(&params.to, connector, adapter_factory, namespaces, preview_features)
-            .await?
-            .unzip();
+    let (conn_to, schema_to) = diff_target_to_dialect(
+        &params.to,
+        connector,
+        adapter_factory,
+        namespaces,
+        &filter,
+        preview_features,
+    )
+    .await?
+    .unzip();
 
     let dialect = conn_from
         .or(conn_to)
@@ -49,7 +59,7 @@ pub async fn diff(
     let from = schema_from.unwrap_or_else(|| dialect.empty_database_schema());
     let to = schema_to.unwrap_or_else(|| dialect.empty_database_schema());
 
-    let migration = dialect.diff(from, to);
+    let migration = dialect.diff(from, to, &filter);
 
     let mut stdout = if params.script {
         dialect.render_script(&migration, &Default::default())?
@@ -106,6 +116,7 @@ async fn diff_target_to_dialect(
     connector: &mut dyn SchemaConnector,
     adapter_factory: Arc<dyn ExternalConnectorFactory>,
     namespaces: Option<Namespaces>,
+    filter: &SchemaFilter,
     preview_features: BitFlags<psl::PreviewFeature>,
 ) -> CoreResult<Option<(Box<dyn SchemaDialect>, DatabaseSchema)>> {
     match target {
@@ -127,29 +138,26 @@ async fn diff_target_to_dialect(
         DiffTarget::SchemaDatamodel(schemas) => {
             let sources = schemas.to_psl_input();
             let dialect = schema_to_dialect(&sources)?;
-            let schema = dialect.schema_from_datamodel(sources)?;
+            let schema = dialect.schema_from_datamodel(sources, connector.default_runtime_namespace())?;
             Ok(Some((dialect, schema)))
         }
         DiffTarget::Url(UrlContainer { .. }) => Err(ConnectorError::from_msg(
             "--from-url and --to-url flags are no longer supported".to_owned(),
         )),
-        DiffTarget::Migrations(MigrationList {
-            lockfile,
-            migration_directories,
-            ..
-        }) => {
-            let provider = schema_connector::migrations_directory::read_provider_from_lock_file(lockfile);
+        DiffTarget::Migrations(migration_list) => {
+            let provider =
+                schema_connector::migrations_directory::read_provider_from_lock_file(&migration_list.lockfile);
             match provider.as_deref() {
                 Some(provider) => {
                     let dialect = dialect_for_provider(provider)?;
-                    let directories =
-                        schema_connector::migrations_directory::list_migrations(migration_directories.clone());
+                    let migrations = Migrations::from_migration_list(migration_list);
 
                     // TODO: enable Driver Adapter for shadow database, using the AdapterFactory.
                     let schema = dialect
                         .schema_from_migrations_with_target(
-                            &directories,
+                            &migrations,
                             namespaces,
+                            filter,
                             ExternalShadowDatabase::DriverAdapter(adapter_factory),
                         )
                         .await?;

@@ -1,5 +1,5 @@
 use crate::ser_raw::SerializedResultSet;
-use crate::{error::*, SqlRow, ToSqlRow};
+use crate::{SqlRow, ToSqlRow, error::*};
 use async_trait::async_trait;
 use futures::future::FutureExt;
 use itertools::Itertools;
@@ -7,7 +7,7 @@ use prisma_value::Placeholder as PrismaValuePlaceholder;
 use quaint::{ast::*, connector::Queryable};
 use query_structure::*;
 use sql_query_builder::value::{GeneratorCall, Placeholder};
-use sql_query_builder::{column_metadata, AsColumns, AsTable, ColumnMetadata, Context, FilterBuilder, SqlTraceComment};
+use sql_query_builder::{AsColumns, AsTable, ColumnMetadata, Context, FilterBuilder, SqlTraceComment, column_metadata};
 use std::{collections::HashMap, panic::AssertUnwindSafe};
 use tracing::info_span;
 use tracing_futures::Instrument;
@@ -189,7 +189,7 @@ pub(crate) trait QueryExt {
 
     /// Read the all columns as a (primary) identifier.
     async fn filter_ids(&self, model: &Model, filter: Filter, ctx: &Context<'_>)
-        -> crate::Result<Vec<SelectionResult>>;
+    -> crate::Result<Vec<SelectionResult>>;
 
     async fn select_ids(
         &self,
@@ -234,16 +234,16 @@ pub fn convert_prisma_type_to_opaque_type(pt: &PrismaValueType) -> OpaqueType {
     match pt {
         PrismaValueType::Any => OpaqueType::Unknown,
         PrismaValueType::String => OpaqueType::Text,
+        PrismaValueType::Uuid => OpaqueType::Uuid,
         PrismaValueType::Int => OpaqueType::Int32,
         PrismaValueType::BigInt => OpaqueType::Int64,
         PrismaValueType::Float => OpaqueType::Numeric,
         PrismaValueType::Boolean => OpaqueType::Boolean,
-        PrismaValueType::Decimal => OpaqueType::Numeric,
-        PrismaValueType::Date => OpaqueType::DateTime,
-        PrismaValueType::Time => OpaqueType::Time,
-        PrismaValueType::Array(t) => OpaqueType::Array(Box::new(convert_prisma_type_to_opaque_type(t))),
-        PrismaValueType::Object => OpaqueType::Json,
+        PrismaValueType::DateTime => OpaqueType::DateTime,
+        PrismaValueType::List(t) => OpaqueType::Array(Box::new(convert_prisma_type_to_opaque_type(t))),
+        PrismaValueType::Json => OpaqueType::Json,
+        PrismaValueType::Object => OpaqueType::Object,
         PrismaValueType::Bytes => OpaqueType::Bytes,
-        PrismaValueType::Enum { .. } => OpaqueType::Text,
+        PrismaValueType::Enum => OpaqueType::Text,
     }
 }

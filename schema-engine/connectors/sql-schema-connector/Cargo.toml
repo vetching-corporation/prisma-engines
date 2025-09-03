@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition.workspace = true
 name = "sql-schema-connector"
 version = "0.1.0"
 
@@ -36,6 +36,7 @@ serde.workspace = true
 indoc.workspace = true
 uuid.workspace = true
 indexmap.workspace = true
+itertools.workspace = true
 
 prisma-value.workspace = true
 schema-connector.workspace = true

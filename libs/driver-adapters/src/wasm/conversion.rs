@@ -1,4 +1,4 @@
-use super::to_js::{serde_serialize, ToJsValue};
+use super::to_js::{ToJsValue, serde_serialize};
 use crate::conversion::{JSArg, JSArgType, MaybeDefined};
 use crate::types::Query;
 use js_sys::{Array, JsString, Object, Reflect, Uint8Array};
@@ -52,7 +52,18 @@ impl ToJsValue for JSArg {
 
 impl ToJsValue for JSArgType {
     fn to_js_value(&self) -> Result<wasm_bindgen::prelude::JsValue, wasm_bindgen::prelude::JsValue> {
-        Ok(JsValue::from(self.to_string()))
+        let object = Object::new();
+
+        let scalar_type = <&str>::from(self.scalar_type).to_js_value()?;
+        Reflect::set(&object, &JsValue::from(JsString::from("scalarType")), &scalar_type)?;
+
+        let db_type = MaybeDefined(self.db_type.as_ref()).to_js_value()?;
+        Reflect::set(&object, &JsValue::from(JsString::from("dbType")), &db_type)?;
+
+        let arity = <&str>::from(self.arity).to_js_value()?;
+        Reflect::set(&object, &JsValue::from(JsString::from("arity")), &arity)?;
+
+        Ok(JsValue::from(object))
     }
 }
 

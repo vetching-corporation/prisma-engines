@@ -1,6 +1,6 @@
 use crate::{
-    pretty_print::{pretty_print, DiagnosticColorer},
     Span,
+    pretty_print::{DiagnosticColorer, pretty_print},
 };
 use colored::{ColoredString, Colorize};
 use indoc::indoc;
@@ -22,6 +22,12 @@ impl DatamodelWarning {
     }
 
     pub fn new_preview_feature_deprecated(feature: &str, span: Span) -> DatamodelWarning {
+        let message =
+            format!("Preview feature \"{feature}\" is deprecated. It will be removed in a future version of Prisma.");
+        Self::new(message, span)
+    }
+
+    pub fn new_preview_feature_is_stabilized(feature: &str, span: Span) -> DatamodelWarning {
         let message = format!(
             "Preview feature \"{feature}\" is deprecated. The functionality can be used without specifying it as a preview feature."
         );
@@ -35,8 +41,8 @@ impl DatamodelWarning {
         span: Span,
     ) -> DatamodelWarning {
         let message = format!(
-                "Preview feature \"{deprecated_feature}\" has been renamed to \"{renamed_feature}\". Learn more at https://pris.ly/d/{prisly_link_endpoint}."
-            );
+            "Preview feature \"{deprecated_feature}\" has been renamed to \"{renamed_feature}\". Learn more at https://pris.ly/d/{prisly_link_endpoint}."
+        );
         Self::new(message, span)
     }
 
@@ -48,8 +54,8 @@ impl DatamodelWarning {
         span: Span,
     ) -> DatamodelWarning {
         let message = format!(
-                "On `provider = \"{provider}\"`, preview feature \"{deprecated_feature}\" has been renamed to \"{renamed_feature}\". Learn more at https://pris.ly/d/{prisly_link_endpoint}."
-            );
+            "On `provider = \"{provider}\"`, preview feature \"{deprecated_feature}\" has been renamed to \"{renamed_feature}\". Learn more at https://pris.ly/d/{prisly_link_endpoint}."
+        );
         Self::new(message, span)
     }
 

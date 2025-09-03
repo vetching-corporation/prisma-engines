@@ -3,12 +3,12 @@
 //! Why this rather than using connectors directly? We must be able to use the schema engine
 //! without a valid schema or database connection for commands like createDatabase and diff.
 
-use crate::{commands, parse_configuration_multi, CoreError, CoreResult, GenericApi, SchemaContainerExt};
+use crate::{CoreError, CoreResult, GenericApi, SchemaContainerExt, commands, parse_configuration_multi};
 use ::commands::MigrationSchemaCache;
 use enumflags2::BitFlags;
 use futures::stream::{FuturesUnordered, StreamExt};
 use json_rpc::types::*;
-use psl::{parser_database::SourceFile, PreviewFeature};
+use psl::parser_database::SourceFile;
 use schema_connector::{ConnectorError, ConnectorHost, IntrospectionResult, Namespaces, SchemaConnector};
 use std::{
     collections::HashMap,
@@ -17,7 +17,7 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing_futures::{Instrument, WithSubscriber};
 
 /// The container for the state of the schema engine. It can contain one or more connectors
@@ -365,7 +365,6 @@ impl GenericApi for EngineState {
         tracing::info!("{:?}", params.schema);
         let source_files = params.schema.to_psl_input();
 
-        let has_some_namespaces = params.namespaces.is_some();
         let composite_type_depth = From::from(params.composite_type_depth);
 
         let ctx = if params.force {
@@ -388,18 +387,6 @@ impl GenericApi for EngineState {
             })
         }
         .map_err(ConnectorError::new_schema_parser_error)?;
-
-        if !ctx
-            .configuration()
-            .preview_features()
-            .contains(PreviewFeature::MultiSchema)
-            && has_some_namespaces
-        {
-            let msg =
-                "The preview feature `multiSchema` must be enabled before using --schemas command line parameter.";
-
-            return Err(CoreError::from_msg(msg.to_string()));
-        }
 
         self.with_connector_for_schema(
             source_files,
@@ -508,11 +495,16 @@ impl GenericApi for EngineState {
         .await
     }
 
-    async fn reset(&self) -> CoreResult<()> {
+    async fn reset(&self, input: ResetInput) -> CoreResult<()> {
         tracing::debug!("Resetting the database.");
         let namespaces = self.namespaces();
         self.with_default_connector(Box::new(move |connector| {
-            Box::pin(SchemaConnector::reset(connector, false, namespaces).instrument(tracing::info_span!("Reset")))
+            Box::pin(async move {
+                let filter: schema_connector::SchemaFilter = input.filter.into();
+                SchemaConnector::reset(connector, false, namespaces, &filter)
+                    .instrument(tracing::info_span!("Reset"))
+                    .await
+            })
         }))
         .await?;
         Ok(())

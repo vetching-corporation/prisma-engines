@@ -6,7 +6,7 @@
 ))]
 use super::TypeIdentifier;
 
-use crate::{ast::OpaqueType, Value, ValueType};
+use crate::{Value, ValueType, ast::OpaqueType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnType {
@@ -155,7 +155,7 @@ impl From<&ValueType<'_>> for ColumnType {
                 OpaqueType::Boolean => ColumnType::Boolean,
                 OpaqueType::Char => ColumnType::Char,
                 OpaqueType::Numeric => ColumnType::Numeric,
-                OpaqueType::Json => ColumnType::Json,
+                OpaqueType::Json | OpaqueType::Object => ColumnType::Json,
                 OpaqueType::Xml => ColumnType::Xml,
                 OpaqueType::Uuid => ColumnType::Uuid,
                 OpaqueType::DateTime => ColumnType::DateTime,
@@ -173,14 +173,15 @@ impl From<&ValueType<'_>> for ColumnType {
                     OpaqueType::Boolean => ColumnType::BooleanArray,
                     OpaqueType::Char => ColumnType::CharArray,
                     OpaqueType::Numeric => ColumnType::NumericArray,
-                    OpaqueType::Json => ColumnType::JsonArray,
+                    OpaqueType::Json | OpaqueType::Object => ColumnType::JsonArray,
                     OpaqueType::Xml => ColumnType::XmlArray,
                     OpaqueType::Uuid => ColumnType::UuidArray,
                     OpaqueType::DateTime => ColumnType::DateTimeArray,
                     OpaqueType::Date => ColumnType::DateArray,
                     OpaqueType::Time => ColumnType::TimeArray,
-                    OpaqueType::Array(_) => ColumnType::Unknown,
+                    OpaqueType::Array(_) | OpaqueType::Tuple(_) => ColumnType::Unknown,
                 },
+                OpaqueType::Tuple(_) => ColumnType::Unknown,
             },
         }
     }

@@ -8,11 +8,12 @@ use crate::introspection::{
     introspection_pair::{EnumPair, ModelPair, RelationFieldDirection, ViewPair},
     sanitize_datamodel_names::{EnumVariantName, IntrospectedName, ModelName},
 };
+use either::Either;
 use psl::{
+    Configuration, PreviewFeature,
     builtin_connectors::*,
     datamodel_connector::Connector,
     parser_database::{self as db, walkers},
-    Configuration, PreviewFeature,
 };
 use quaint::prelude::SqlFamily;
 use schema_connector::IntrospectionContext;
@@ -81,7 +82,19 @@ impl<'a> DatamodelCalculatorContext<'a> {
         self.config.datasources.first().unwrap().active_connector
     }
 
+    // Note: when this method returns true, we use it to add `@@schema` attributes to the
+    // introspected models, enums, views.
     pub(crate) fn uses_namespaces(&self) -> bool {
+        // Note: you may be tempted to return true when
+        // ```
+        // self
+        //     .active_connector()
+        //     .capabilities()
+        //     .contains(ConnectorCapability::MultiSchema)
+        // ```
+        // but that would not be correct in all cases.
+        // Why? Because we should only add `@@schema` attributes when the user has specified
+        // an explicit list of `schemas`.
         let schemas_in_datasource = matches!(self.config.datasources.first(), Some(ds) if !ds.namespaces.is_empty());
         let schemas_in_parameters = self.force_namespaces.is_some();
 
@@ -91,16 +104,33 @@ impl<'a> DatamodelCalculatorContext<'a> {
     /// Iterate over the database enums, combined together with a
     /// possible existing enum in the PSL.
     pub(crate) fn enum_pairs(&'a self) -> impl Iterator<Item = EnumPair<'a>> + 'a {
-        let uses_views = self.config.preview_features().contains(PreviewFeature::Views);
-        let is_mysql = self.sql_family.is_mysql();
+        if self.sql_family.is_sqlite() {
+            Either::Left(
+                self.previous_schema
+                    .db
+                    .walk_enums()
+                    .map(|id| EnumPair::from_model(id, self)),
+            )
+        } else {
+            let uses_views = self.config.preview_features().contains(PreviewFeature::Views);
+            let is_mysql = self.sql_family.is_mysql();
 
-        self.sql_schema
-            .enum_walkers()
-            // MySQL enums are taken from the columns, which means a rogue enum might appear
-            // for users not using the views preview feature, but having views with enums
-            // in their database.
-            .filter(move |e| !is_mysql || uses_views || self.sql_schema.enum_used_in_tables(e.id))
-            .map(|next| EnumPair::new(self, self.existing_enum(next.id), next))
+            Either::Right(
+                self.sql_schema
+                    .enum_walkers()
+                    // MySQL enums are taken from the columns, which means a rogue enum might appear
+                    // for users not using the views preview feature, but having views with enums
+                    // in their database.
+                    .filter(move |e| !is_mysql || uses_views || self.sql_schema.enum_used_in_tables(e.id))
+                    .map(|next| {
+                        let mut pair = EnumPair::from_db(next, self);
+                        if let Some(model_enum) = self.existing_enum(next.id) {
+                            pair.insert_model(model_enum);
+                        }
+                        pair
+                    }),
+            )
+        }
     }
 
     pub(crate) fn sql_family(&self) -> SqlFamily {

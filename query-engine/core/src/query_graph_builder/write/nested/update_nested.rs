@@ -1,11 +1,11 @@
 use super::*;
 use crate::inputs::{UpdateManyRecordsSelectorsInput, UpdateRecordSelectorsInput};
 use crate::query_graph_builder::write::update::UpdateManyRecordNodeOptionals;
-use crate::{
-    query_graph::{NodeRef, QueryGraph, QueryGraphDependency},
-    ParsedInputValue,
-};
 use crate::{DataExpectation, RowSink};
+use crate::{
+    ParsedInputValue,
+    query_graph::{NodeRef, QueryGraph, QueryGraphDependency},
+};
 use query_structure::{Filter, Model, RelationFieldRef};
 use schema::constants::args;
 use std::convert::TryInto;
@@ -95,7 +95,7 @@ pub fn nested_update(
         graph.create_edge(
             &find_child_records_node,
             &update_node,
-            QueryGraphDependency::ProjectedDataSinkDependency(
+            QueryGraphDependency::ProjectedDataDependency(
                 child_model_identifier.clone(),
                 RowSink::ExactlyOne(&UpdateRecordSelectorsInput),
                 Some(DataExpectation::non_empty_rows(
@@ -151,7 +151,7 @@ pub fn nested_update_many(
         graph.create_edge(
             &find_child_records_node,
             &update_many_node,
-            QueryGraphDependency::ProjectedDataSinkDependency(
+            QueryGraphDependency::ProjectedDataDependency(
                 child_model_identifier.clone(),
                 RowSink::All(&UpdateManyRecordsSelectorsInput),
                 None,

@@ -1,9 +1,9 @@
 use super::{write_args_parser::WriteArgsParser, *};
 use crate::{
+    DataExpectation, ParsedField, ParsedInputMap, ParsedInputValue, ParsedObject, RowSink,
     inputs::{IfInput, RecordQueryFilterInput, UpdateRecordSelectorsInput},
     query_ast::*,
     query_graph::{Flow, QueryGraph, QueryGraphDependency},
-    DataExpectation, ParsedField, ParsedInputMap, ParsedInputValue, ParsedObject, RowSink,
 };
 use query_structure::Model;
 use schema::QuerySchema;
@@ -73,25 +73,23 @@ pub(crate) fn upsert_record(
     let filter = extract_unique_filter(where_argument, &model)?;
     let read_query = read::find_unique(field.clone(), model.clone(), query_schema)?;
 
-    if can_use_native_upsert {
-        if let ReadQuery::RecordQuery(read) = read_query {
-            let mut create_write_args = WriteArgsParser::from(&model, create_argument)?.args;
-            let mut update_write_args = WriteArgsParser::from(&model, update_argument)?.args;
+    if can_use_native_upsert && let ReadQuery::RecordQuery(read) = read_query {
+        let mut create_write_args = WriteArgsParser::from(&model, create_argument)?.args;
+        let mut update_write_args = WriteArgsParser::from(&model, update_argument)?.args;
 
-            create_write_args.add_datetimes(&model);
-            update_write_args.add_datetimes(&model);
+        create_write_args.add_datetimes(&model);
+        update_write_args.add_datetimes(&model);
 
-            graph.create_node(WriteQuery::native_upsert(
-                field.name,
-                model,
-                filter.into(),
-                create_write_args,
-                update_write_args,
-                read,
-            ));
+        graph.create_node(WriteQuery::native_upsert(
+            field.name,
+            model,
+            filter.into(),
+            create_write_args,
+            update_write_args,
+            read,
+        ));
 
-            return Ok(());
-        }
+        return Ok(());
     }
 
     graph.flag_transactional();
@@ -123,7 +121,7 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &read_parent_records_node,
         &if_node,
-        QueryGraphDependency::ProjectedDataSinkDependency(model_id.clone(), RowSink::All(&IfInput), None),
+        QueryGraphDependency::ProjectedDataDependency(model_id.clone(), RowSink::All(&IfInput), None),
     )?;
 
     // In case the connector doesn't support referential integrity, we add a subtree to the graph that emulates the ON_UPDATE referential action.
@@ -151,7 +149,7 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &read_parent_records_node,
         &update_node,
-        QueryGraphDependency::ProjectedDataSinkDependency(
+        QueryGraphDependency::ProjectedDataDependency(
             model_id.clone(),
             RowSink::ExactlyOne(&UpdateRecordSelectorsInput),
             None,
@@ -161,7 +159,7 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &update_node,
         &read_node_update,
-        QueryGraphDependency::ProjectedDataSinkDependency(
+        QueryGraphDependency::ProjectedDataDependency(
             model_id.clone(),
             RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
             Some(DataExpectation::non_empty_rows(
@@ -173,7 +171,7 @@ pub(crate) fn upsert_record(
     graph.create_edge(
         &create_node,
         &read_node_create,
-        QueryGraphDependency::ProjectedDataSinkDependency(
+        QueryGraphDependency::ProjectedDataDependency(
             model_id,
             RowSink::ExactlyOneFilter(&RecordQueryFilterInput),
             Some(DataExpectation::non_empty_rows(

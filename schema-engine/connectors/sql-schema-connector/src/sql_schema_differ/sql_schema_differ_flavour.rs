@@ -1,8 +1,8 @@
-use super::{differ_database::DifferDatabase, ColumnTypeChange};
+use super::{ColumnTypeChange, differ_database::DifferDatabase};
 use crate::{migration_pair::MigrationPair, sql_migration::SqlMigrationStep, sql_schema_differ};
 use sql_schema_describer::{
-    walkers::{IndexWalker, TableColumnWalker, TableWalker},
     TableColumnId,
+    walkers::{IndexWalker, TableColumnWalker, TableWalker},
 };
 
 /// Trait to specialize SQL schema diffing (resulting in migration steps) by SQL backend.
@@ -136,6 +136,23 @@ pub(crate) trait SqlSchemaDifferFlavour {
 
     fn table_names_match(&self, names: MigrationPair<&str>) -> bool {
         names.previous == names.next
+    }
+
+    /// Check if the given table name is in the given list of tables names.
+    /// If the user uses multiple schemas the table names has to be fully qualified (e.g. `auth.user`).
+    fn contains_table(&self, tables: &[String], namespace: Option<&str>, table_name: &str) -> bool {
+        let str_eq = if self.lower_cases_table_names() {
+            str::eq_ignore_ascii_case
+        } else {
+            str::eq
+        };
+
+        if let Some(ns) = namespace {
+            let namespaced_table_name = format!("{ns}.{table_name}");
+            tables.iter().any(|t| str_eq(t, &namespaced_table_name))
+        } else {
+            tables.iter().any(|t| str_eq(t, table_name))
+        }
     }
 
     /// Return the tables that cannot be migrated without being redefined. This

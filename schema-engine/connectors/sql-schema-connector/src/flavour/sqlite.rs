@@ -8,14 +8,14 @@ use crate::{flavour::SqlConnector, sql_renderer::SqlRenderer};
 use connector as imp;
 use destructive_change_checker::SqliteDestructiveChangeCheckerFlavour;
 use indoc::indoc;
-use quaint::connector::AdapterName;
+use quaint::connector::{AdapterName, DEFAULT_SQLITE_DATABASE};
 use renderer::SqliteRenderer;
 use schema_calculator::SqliteSchemaCalculatorFlavour;
 use schema_connector::{
-    migrations_directory::MigrationDirectory, BoxFuture, ConnectorError, ConnectorResult, Namespaces,
+    BoxFuture, ConnectorError, ConnectorResult, Namespaces, SchemaFilter, migrations_directory::Migrations,
 };
 use schema_differ::SqliteSchemaDifferFlavour;
-use sql_schema_describer::{sqlite::SqlSchemaDescriber, DescriberErrorKind, SqlSchema};
+use sql_schema_describer::{DescriberErrorKind, SqlSchema, sqlite::SqlSchemaDescriber};
 use std::future::Future;
 
 use super::{SqlDialect, UsingExternalShadowDb};
@@ -155,7 +155,11 @@ impl SqlConnector for SqliteConnector {
         self.with_connection(|conn, _| conn.apply_migration_script(migration_name, script))
     }
 
-    fn table_names(&mut self, _namespaces: Option<Namespaces>) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
+    fn table_names(
+        &mut self,
+        _namespaces: Option<Namespaces>,
+        filters: SchemaFilter,
+    ) -> BoxFuture<'_, ConnectorResult<Vec<String>>> {
         Box::pin(async move {
             let select = r#"SELECT name AS table_name FROM sqlite_master WHERE type='table' ORDER BY name ASC"#;
             let rows = self.query_raw(select, &[]).await?;
@@ -163,6 +167,12 @@ impl SqlConnector for SqliteConnector {
             let table_names: Vec<String> = rows
                 .into_iter()
                 .flat_map(|row| row.get("table_name").and_then(|s| s.to_string()))
+                .filter(|table_name| {
+                    !self
+                        .dialect()
+                        .schema_differ()
+                        .contains_table(&filters.external_tables, None, table_name)
+                })
                 .collect();
 
             Ok(table_names)
@@ -245,15 +255,7 @@ impl SqlConnector for SqliteConnector {
                         return Ok(Err(schema_connector::PersistenceNotInitializedError));
                     }
 
-                    // TODO: this is a workaround, as currently the errors thrown by D1 and LibSQL do not
-                    // match the known user-facing errors we expect for SQLite.
-                    // We should fix this in the future.
-                    //
-                    // We used to actually yield:
-                    // ```
-                    // return Err(err)
-                    // ```
-                    return Ok(Err(schema_connector::PersistenceNotInitializedError));
+                    return Err(err);
                 }
             };
 
@@ -350,15 +352,20 @@ impl SqlConnector for SqliteConnector {
     #[tracing::instrument(skip(self, migrations))]
     fn sql_schema_from_migration_history<'a>(
         &'a mut self,
-        migrations: &'a [MigrationDirectory],
+        migrations: &'a Migrations,
         _namespaces: Option<Namespaces>,
+        _filter: &'a SchemaFilter,
         external_shadow_db: UsingExternalShadowDb,
     ) -> BoxFuture<'a, ConnectorResult<SqlSchema>> {
         async fn apply_migrations_and_describe(
             connection: &imp::Connection,
-            migrations: &[MigrationDirectory],
+            migrations: &Migrations,
         ) -> ConnectorResult<SqlSchema> {
-            for migration in migrations {
+            if !migrations.shadow_db_init_script.trim().is_empty() {
+                connection.raw_cmd(&migrations.shadow_db_init_script).await?;
+            }
+
+            for migration in migrations.migration_directories.iter() {
                 let script = migration.read_migration_script()?;
 
                 tracing::debug!(
@@ -397,7 +404,11 @@ impl SqlConnector for SqliteConnector {
     }
 
     fn search_path(&self) -> &str {
-        "main"
+        DEFAULT_SQLITE_DATABASE
+    }
+
+    fn default_namespace(&self) -> Option<&str> {
+        None // For Sqlite we do not support multiple namespaces
     }
 
     fn dispose(&mut self) -> BoxFuture<'_, ConnectorResult<()>> {

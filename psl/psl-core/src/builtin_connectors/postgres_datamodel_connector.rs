@@ -5,19 +5,19 @@ mod validations;
 pub use native_types::PostgresType;
 
 use crate::{
+    Configuration, Datasource, DatasourceConnectorData, PreviewFeature,
     datamodel_connector::{
         Connector, ConnectorCapabilities, ConnectorCapability, ConstraintScope, Flavour, NativeTypeConstructor,
         NativeTypeInstance, RelationMode, StringFilter,
     },
     diagnostics::Diagnostics,
-    parser_database::{ast, walkers, IndexAlgorithm, OperatorClass, ParserDatabase, ReferentialAction, ScalarType},
-    Configuration, Datasource, DatasourceConnectorData, PreviewFeature,
+    parser_database::{IndexAlgorithm, OperatorClass, ParserDatabase, ReferentialAction, ScalarType, ast, walkers},
 };
+use PostgresType::*;
 use chrono::*;
 use enumflags2::BitFlags;
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, InsertTextFormat};
 use std::{borrow::Cow, collections::HashMap};
-use PostgresType::*;
 
 use super::completions;
 
@@ -570,7 +570,7 @@ impl Connector for PostgresDatamodelConnector {
             completions::extensions_completion(completion_list);
         }
 
-        if config.preview_features().contains(PreviewFeature::MultiSchema) && !ds.schemas_defined() {
+        if !ds.schemas_defined() {
             completions::schemas_completion(completion_list);
         }
     }

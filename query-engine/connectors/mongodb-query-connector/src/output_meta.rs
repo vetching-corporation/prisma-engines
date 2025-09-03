@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use query_structure::{
-    ast::FieldArity, AggregationSelection, DefaultKind, FieldSelection, PrismaValue, ScalarFieldRef, SelectedField,
-    TypeIdentifier,
+    AggregationSelection, DefaultKind, FieldSelection, PrismaValue, ScalarFieldRef, SelectedField, TypeIdentifier,
+    ast::FieldArity,
 };
 
 /// Maps field db field names to their meta information.
@@ -118,7 +118,7 @@ pub fn from_aggregation_selection(selection: &AggregationSelection) -> OutputMet
 
     for ident in selection.identifiers() {
         map.insert(
-            ident.db_name.into(),
+            ident.field_db_name.into(),
             OutputMeta::Scalar(ScalarOutputMeta {
                 ident: ident.typ.id,
                 default: None,

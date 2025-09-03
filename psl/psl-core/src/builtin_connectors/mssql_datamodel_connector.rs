@@ -9,8 +9,7 @@ use crate::{
         NativeTypeInstance, RelationMode,
     },
     diagnostics::{Diagnostics, Span},
-    parser_database::{self, ast, ParserDatabase, ReferentialAction, ScalarType},
-    PreviewFeature,
+    parser_database::{self, ParserDatabase, ReferentialAction, ScalarType, ast},
 };
 use enumflags2::BitFlags;
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList};
@@ -281,7 +280,7 @@ impl Connector for MsSqlDatamodelConnector {
             None => return,
         };
 
-        if config.preview_features().contains(PreviewFeature::MultiSchema) && !ds.schemas_defined() {
+        if !ds.schemas_defined() {
             completions::schemas_completion(completion_list);
         }
     }

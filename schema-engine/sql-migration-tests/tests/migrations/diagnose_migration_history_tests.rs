@@ -1,12 +1,12 @@
 use pretty_assertions::assert_eq;
 use schema_core::{
     commands::{DiagnoseMigrationHistoryInput, DiagnoseMigrationHistoryOutput, DriftDiagnostic, HistoryDiagnostic},
-    json_rpc::types::CreateMigrationOutput,
+    json_rpc::types::{CreateMigrationOutput, SchemaFilter},
     schema_api,
 };
 use sql_migration_tests::{test_api::*, utils::list_migrations};
 use std::io::Write;
-use user_facing_errors::{schema_engine::ShadowDbCreationError, UserFacingError};
+use user_facing_errors::{UserFacingError, schema_engine::ShadowDbCreationError};
 
 #[test_connector]
 fn diagnose_migrations_history_on_an_empty_database_without_migration_returns_nothing(api: TestApi) {
@@ -817,6 +817,7 @@ fn shadow_database_creation_error_is_special_cased_mysql(api: TestApi) {
     let output = tok(migration_api.diagnose_migration_history(DiagnoseMigrationHistoryInput {
         migrations_list,
         opt_in_to_shadow_database: true,
+        filters: SchemaFilter::default(),
     }))
     .unwrap();
 
@@ -866,6 +867,7 @@ fn shadow_database_creation_error_is_special_cased_postgres(api: TestApi) {
             .diagnose_migration_history(DiagnoseMigrationHistoryInput {
                 migrations_list,
                 opt_in_to_shadow_database: true,
+                filters: SchemaFilter::default(),
             })
             .await
     })
@@ -936,6 +938,7 @@ fn shadow_database_creation_error_is_special_cased_mssql(api: TestApi) {
     let output = tok(migration_api.diagnose_migration_history(DiagnoseMigrationHistoryInput {
         migrations_list,
         opt_in_to_shadow_database: true,
+        filters: SchemaFilter::default(),
     }))
     .unwrap();
 
